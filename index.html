@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>한 줄</title>
+<style>
+:root{
+  /* 바탕을 검정이 아니라 짙은 회갈색으로 올렸다. 칸·카드는 바탕보다
+     한 단계씩 더 밝게 둬서 "판 위에 놓인 것"이라는 층위가 남게 한다 */
+  --bg:#2a2924; --fg:#faf9f5; --dim:#b6b3a7; --line:#484640; --line2:#736f65;
+  --ac:#ff7452; --ok:#b3e09a;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  display:flex; align-items:center; justify-content:center;
+  padding:20px; overflow-x:hidden;
+}
+#app{width:100%; max-width:900px}
+
+/* ── 상단 계기판 */
+header{display:flex; gap:28px; align-items:baseline; border-bottom:1px solid var(--line);
+  padding-bottom:12px; margin-bottom:34px; flex-wrap:wrap}
+.stat{display:flex; flex-direction:column; gap:2px}
+.stat b{font:600 20px/1 var(--mono); letter-spacing:-.02em}
+.stat span{font-size:10.5px; letter-spacing:.14em; color:var(--dim); text-transform:uppercase}
+.stat.goal b{color:var(--ac)}
+header .sp{flex:1}
+.brand{font:600 13px/1 var(--mono); letter-spacing:.3em; color:var(--dim)}
+
+/* ── 줄 */
+#stage{min-height:230px; display:flex; flex-direction:column; justify-content:center; gap:22px;
+  transition:min-height .2s}
+#stage.idle{min-height:0}
+#line{display:flex; gap:6px; justify-content:center; flex-wrap:nowrap}
+.slot{
+  flex:1 1 0; min-width:0; aspect-ratio:3/4; max-width:82px;
+  border:1px solid var(--line); border-radius:3px;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px;
+  position:relative; transition:border-color .12s, background .12s, transform .12s;
+  cursor:default; background:#333128;
+}
+.slot.full{border-color:var(--line2); background:#403d33}
+.slot .g{font:600 13px/1.15 var(--mono); text-align:center; word-break:keep-all; padding:0 3px}
+.slot .idx{position:absolute; top:4px; left:5px; font:10px/1 var(--mono); color:#8a8679}
+.slot .val{position:absolute; bottom:5px; left:0; right:0; text-align:center;
+  font:11px/1 var(--mono); color:var(--ac); opacity:0; transition:opacity .1s}
+.slot.lit{border-color:var(--ac); background:#54301f; transform:translateY(-3px)}
+.slot.lit .val{opacity:1}
+.slot.done .val{opacity:.7; color:var(--dim)}
+.slot.pick{cursor:pointer; border-style:dashed; border-color:#807c70}
+.slot.pick:hover{border-color:var(--ac); border-style:solid; background:#4a2c1f}
+.slot.sel{border-color:var(--ok) !important; border-style:solid}
+.slot.skipped{opacity:.3}
+.slot.idle .val{color:var(--dim)}
+/* 같은 카드가 앞칸에 있어 이번 판에 아무 일도 안 하는 칸 */
+.slot.spent .g{opacity:.32; text-decoration:line-through; text-decoration-color:var(--ac)}
+.slot.spent::after{content:'무효'; position:absolute; top:4px; right:5px;
+  font:9px/1 var(--mono); color:var(--ac); opacity:.9}
+
+/* ── 흐르는 값 */
+#flow{text-align:center; font:600 34px/1 var(--mono); letter-spacing:-.03em; min-height:40px}
+#flow small{display:block; font:400 12px/1.6 -apple-system,sans-serif; letter-spacing:.1em; color:var(--dim); margin-top:8px}
+#flow.win{color:var(--ok)} #flow.lose{color:var(--ac)}
+
+/* ── 하단 패널 */
+footer{margin-top:34px; border-top:1px solid var(--line); padding-top:20px; min-height:150px}
+.msg{color:var(--dim); font-size:13.5px; text-align:center; margin-bottom:14px}
+.msg em{color:var(--fg); font-style:normal}
+.cards{display:flex; gap:8px; justify-content:center; flex-wrap:wrap}
+.card{
+  width:139px; border:1px solid var(--line2); border-radius:3px; padding:12px 12px 11px;
+  background:#39372e; cursor:pointer; text-align:left; color:inherit; font:inherit;
+  transition:border-color .12s, background .12s, transform .12s;
+}
+.card:hover{border-color:var(--ac); background:#4a2c1f; transform:translateY(-2px)}
+.card .g{font:600 17px/1 var(--mono); margin-bottom:7px}
+.card .nm{font-size:12px; margin-bottom:5px}
+.card .d{font-size:11.5px; line-height:1.5; color:var(--dim)}
+.card .r{float:right; font-size:9.5px; letter-spacing:.1em; color:var(--dim)}
+.card .warn{display:block; margin-top:8px; padding-top:8px; border-top:1px solid var(--line2);
+  font-size:11px; line-height:1.45; color:var(--ac)}
+.card.dupe{border-color:var(--ac); border-style:dashed}
+/* 고른 카드. 확인을 누르기 전까지는 아직 아무것도 확정되지 않았다 */
+.card.sel{border-color:var(--ok); border-style:solid; background:#2f3a2a}
+.card.sel::before{content:'선택'; float:left; font:600 9.5px/1 var(--mono);
+  letter-spacing:.1em; color:var(--ok); margin-right:6px}
+button.act:disabled{opacity:.32; cursor:default}
+button.act:disabled:hover{opacity:.32}
+.card .r.rare{color:#a9c8ec} .card .r.legend{color:var(--ac)}
+.row{display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap}
+button.act{
+  font:600 13px/1 inherit; letter-spacing:.06em; padding:13px 30px; border-radius:3px;
+  border:1px solid var(--fg); background:var(--fg); color:var(--bg); cursor:pointer;
+  transition:opacity .12s;
+}
+button.act:hover{opacity:.82}
+button.ghost{background:none; color:var(--fg); border-color:var(--line2)}
+button.ghost:hover{border-color:var(--fg); opacity:1}
+.held{display:inline-flex; align-items:center; gap:9px; border:1px solid var(--ac); border-radius:3px;
+  padding:8px 14px; background:#4a2c1f}
+.held .g{font:600 15px/1 var(--mono); color:var(--ac)}
+.held .d{font-size:12px; color:var(--dim); max-width:330px}
+
+/* ── 카드 목록 */
+#dex{position:fixed; inset:0; background:var(--bg); overflow:auto; padding:34px 20px;
+  display:none; z-index:20}
+#dex.on{display:block}
+#dex .wrap{max-width:900px; margin:0 auto}
+#dex h2{font:600 22px/1 -apple-system,sans-serif; margin-bottom:6px}
+#dex .sub{color:var(--dim); font-size:12.5px; line-height:1.7; margin-bottom:22px}
+#dex .grp{font:600 11px/1 var(--mono); letter-spacing:.18em; color:var(--dim);
+  margin:22px 0 10px; padding-bottom:7px; border-bottom:1px solid var(--line)}
+#dex .list{display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:9px}
+#dex .it{border:1px solid var(--line); border-radius:3px; padding:10px 12px; background:#33312a}
+#dex .it b{font:600 14px/1 var(--mono); display:inline-block; margin-right:8px}
+#dex .it span{font-size:12px}
+#dex .it p{font-size:11.5px; line-height:1.5; color:var(--dim); margin-top:6px}
+#dex .close{position:sticky; top:0; float:right}
+
+/* ── 결과 */
+pre.share{font:12.5px/1.7 var(--mono); background:#39372e; border:1px solid var(--line2);
+  border-radius:3px; padding:14px 16px; white-space:pre-wrap; word-break:break-all;
+  color:var(--fg); margin:0 auto 16px; max-width:440px; text-align:left}
+.hint{text-align:center; font-size:12px; color:var(--dim); margin-top:14px; line-height:1.75}
+.title{text-align:center; margin-bottom:26px}
+.title h1{font:600 30px/1.2 -apple-system,sans-serif; letter-spacing:-.02em; margin-bottom:10px}
+.title p{color:var(--dim); font-size:13.5px; line-height:1.8}
+.title p em{color:var(--fg); font-style:normal; font-weight:600}
+@media(max-width:560px){
+  .slot .g{font-size:10px} .cards{flex-direction:column; align-items:center}
+  .card{width:100%; max-width:300px} header{gap:18px} #flow{font-size:26px}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="stat"><b id="hFloor">—</b><span id="hFloorLbl">층</span></div>
+    <div class="stat goal"><b id="hGoal">—</b><span>목표</span></div>
+    <div class="stat"><b id="hTotal">0</b><span>총점</span></div>
+    <div class="stat"><b id="hLoop">—</b><span>되감기</span></div>
+    <div class="sp"></div>
+    <div class="brand" id="hMode">한 줄</div>
+  </header>
+  <div id="stage">
+    <div id="line"></div>
+    <div id="flow"></div>
+  </div>
+  <footer id="panel"></footer>
+</div>
+<div id="dex"><div class="wrap"></div></div>
+
+<script src="engine.js"></script>
+<script>
+"use strict";
+var E = ENGINE;
+
+/* ── 난수 세 갈래
+   offer : 무슨 카드가 나오나 (시드 하나로 고정)
+   exec  : 층을 실제로 굴릴 때. 층마다 독립적으로 만든다 —
+           미리보기를 몇 번 눌렀는지가 결과를 바꾸면 데일리 비교가 깨진다
+   prev  : 미리보기 전용. 결과에 아무 영향이 없다 */
+function execRnd(seed, floor){ return E.mulberry32((seed ^ (floor*7919)) >>> 0); }
+function prevRnd(){ return E.mulberry32(0x9e3779b9); }
+
+var S = null;
+
+function curGoal(){ return S.tut ? S.tut.def.goal : E.targetFor(S.floor); }
+
+/* 데일리 기록은 그날의 첫 판만 남긴다. 다시 못 하게 막지는 않는다 —
+   막아봐야 시크릿 창으로 열면 그만이고, 친구끼리 하는 판에서
+   기록의 근거는 어차피 서로에 대한 신뢰라서 */
+function recKey(){ return 'oneline-d' + E.dayNumber(); }
+function readRec(){
+  try { return JSON.parse(localStorage.getItem(recKey()) || 'null'); } catch(e){ return null; }
+}
+function writeRec(r){
+  try { if (!readRec()) localStorage.setItem(recKey(), JSON.stringify(r)); } catch(e){}
+}
+
+function newGame(daily){
+  var seed = daily ? E.dailySeed() : (Math.random()*4294967295)>>>0;
+  S = {
+    tut: null,
+    daily: daily, seed: seed, floor: 1, total: 0,
+    line: new Array(E.SLOTS_START).fill(null),
+    offer: E.mulberry32(seed),
+    queue: E.START_HAND.slice(),   // 놓아야 할 카드 대기줄
+    held: null, pick: null, phase: 'place', choices: null,
+    swapFrom: -1, lastRes: null, best: 0
+  };
+  document.getElementById('stage').classList.remove('idle');
+  takeNext();
+  render();
+}
+function takeNext(){
+  S.held = S.queue.length ? S.queue.shift() : null;
+  S.phase = S.held ? 'place' : 'ready';
+}
+
+// ══════════════════════════════════ 표시 도우미
+/* 지수 카드에 상한이 없어서 점수가 1e300까지 간다. 한글 단위는 해(1e20)까지만
+   쓰고 그 위로는 10의 거듭제곱으로 — 「1자 3000양」 같은 건 아무도 못 읽는다 */
+var SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+function supNum(e){
+  return String(e).split('').map(function(ch){ return SUP[+ch] || ch; }).join('');
+}
+function fmt(n){
+  if (!isFinite(n)) return '∞';
+  n = Math.floor(n);
+  if (n >= 1e20){
+    var e = Math.floor(Math.log10(n));
+    var m = n / Math.pow(10, e);
+    return m.toFixed(2) + '×10' + supNum(e);
+  }
+  if (n >= 1e16) return (n/1e16).toFixed(n/1e16 < 10 ? 2 : 1) + '경';
+  if (n >= 1e12) return (n/1e12).toFixed(n/1e12 < 10 ? 2 : 1) + '조';
+  if (n >= 1e8)  return (n/1e8).toFixed(n/1e8 < 10 ? 2 : 1) + '억';
+  return n.toLocaleString('ko-KR');
+}
+/* 목표에 얼마나 못 미쳤나. 값이 커지면 뺄셈이 무의미해진다 —
+   9.35×10²⁸ 목표에 5.85×10²⁴ 점이면 차이도 9.35×10²⁸ 이라
+   "9.35×10²⁸ 모자랍니다"가 목표를 그대로 되뇌는 꼴이 된다.
+   열 배 넘게 벌어지면 배수로 말한다 */
+function shortText(v, goal){
+  var r = goal / Math.max(v, 1);
+  if (r < 10) return fmt(goal - v) + ' 모자랍니다';
+  return fmt(r) + '배 모자랍니다';
+}
+
+function el(tag, cls, txt){
+  var d = document.createElement(tag);
+  if (cls) d.className = cls;
+  if (txt != null) d.textContent = txt;
+  return d;
+}
+function cardBtn(id, onClick){
+  var c = E.CARDS[id];
+  var b = el('button','card');
+  var at = S && S.line ? E.haveIn(S.line, id) : -1;
+  b.innerHTML = '<span class="r ' + c.r + '">' + E.RARITY[c.r] + '</span>' +
+                '<div class="g">' + c.g + '</div>' +
+                '<div class="nm">' + c.n + '</div>' +
+                '<div class="d">' + c.d + '</div>' +
+                (at >= 0
+                  ? '<span class="warn">⚠ 이미 ' + (at+1) + '번 칸에 있습니다.<br>' +
+                    '같은 카드는 <b>더 앞의 것만</b> 발동합니다 — 뒤에 놓으면 아무 일도 안 하고, ' +
+                    (at+1) + '번 칸보다 앞에 놓으면 그쪽이 대신 무효가 됩니다.</span>'
+                  : '');
+  if (at >= 0) b.classList.add('dupe');
+  b.onclick = onClick;
+  return b;
+}
+
+// ══════════════════════════════════ 그리기
+function render(){
+  var goal = curGoal();
+  document.getElementById('hFloor').textContent = S.tut ? (S.tut.i+1) + '/' + TUT.length : S.floor;
+  document.getElementById('hFloorLbl').textContent = S.tut ? '단계' : '층';
+  document.getElementById('hGoal').textContent  =
+    (goal == null || (S.tut && S.tut.def.always)) ? '—' : fmt(goal);
+  document.getElementById('hTotal').textContent = fmt(S.total);
+  document.getElementById('hLoop').textContent  = E.LOOP_BUDGET;
+  document.getElementById('hMode').textContent  =
+    S.tut ? '튜토리얼' : (S.daily ? '데일리 #' + E.dayNumber() : '자유');
+  document.getElementById('hTotal').textContent = S.tut ? '—' : fmt(S.total);
+  document.getElementById('hLoop').textContent  = S.tut ? (S.tut.def.loops || '—') : E.LOOP_BUDGET;
+
+  drawLine();
+  drawFlow();
+  drawPanel();
+}
+
+function drawLine(){
+  var wrap = document.getElementById('line');
+  wrap.innerHTML = '';
+  for (var i=0;i<S.line.length;i++){
+    (function(i){
+      var c = S.line[i];
+      var s = el('div','slot' + (c ? ' full' : ''));
+      s.appendChild(el('span','idx', i+1));
+      s.appendChild(el('div','g', c ? E.CARDS[c.id].g : ''));
+      s.appendChild(el('div','val',''));
+      if (c) s.title = E.CARDS[c.id].n + ' — ' + E.CARDS[c.id].d;
+      if (c && E.mutedAt(S.line, i)){
+        s.classList.add('spent');
+        s.title += '\n⚠ 같은 카드가 앞칸에 있습니다. 앞의 것만 발동하고 이 칸은 아무 일도 안 합니다';
+      }
+
+      if (S.phase === 'place'){
+        s.classList.add('pick');
+        s.onclick = function(){ placeHeld(i); };
+        s.onmouseenter = function(){ previewAt(i); };
+        s.onmouseleave = function(){ drawFlow(); };
+      } else if (S.phase === 'repair'){
+        s.classList.add('pick');
+        if (S.swapFrom === i) s.classList.add('sel');
+        s.onclick = function(){ doSwap(i); };
+      }
+      wrap.appendChild(s);
+    })(i);
+  }
+}
+
+function drawFlow(txt, cls, sub){
+  var f = document.getElementById('flow');
+  f.className = cls || '';
+  f.innerHTML = '';
+  if (txt == null){
+    if (S.phase === 'over' || S.phase === 'anim') return;   // 끝난 판을 다시 계산해 덮지 않음
+    if (S.tut && S.phase !== 'place' && S.phase !== 'ready') return;
+    var v = E.expected(S.line, prevRnd(), 9, S.floor);
+    var goal = curGoal();
+    f.textContent = fmt(v);
+    var au = E.loopAudit(S.line);
+    f.appendChild(el('small', null,
+      (v >= goal ? '지금 배치로 통과' : '목표까지 ' + shortText(v, goal)) +
+      (au.over ? '  ·  ⚠ 되감기 카드 ' + au.cards + '장 / 쓸 수 있는 건 ' + au.budget + '번' : '')));
+    f.className = v >= goal ? 'win' : '';
+  } else {
+    f.textContent = txt;
+    if (sub) f.appendChild(el('small', null, sub));
+  }
+}
+
+function previewAt(i){
+  var keep = S.line[i];
+  S.line[i] = { id: S.held };
+  var v = E.expected(S.line, prevRnd(), 9, S.floor);
+  S.line[i] = keep;
+  var goal = curGoal();
+  S.line[i] = { id: S.held };
+  var spent = E.mutedAt(S.line, i);
+  S.line[i] = keep;
+  drawFlow(fmt(v), v >= goal ? 'win' : '',
+    (spent ? '⚠ 같은 카드가 앞칸에 있어 이 칸은 무효 · ' : '') +
+    (keep ? E.CARDS[keep.id].n + ' 을(를) 덮어씀 · ' : '') +
+    (v >= goal ? '통과' : '목표까지 ' + shortText(v, goal)));
+}
+
+function drawPanel(){
+  var p = document.getElementById('panel');
+  p.innerHTML = '';
+  if (S.tut){ tutPanel(p); return; }
+
+  if (S.phase === 'place'){
+    var c = E.CARDS[S.held];
+    var m = el('div','msg');
+    m.innerHTML = '카드를 놓을 칸을 고르세요. <em>이미 찬 칸에 놓으면 덮어씁니다 — ' +
+                  '그게 이 게임에서 카드를 지우는 유일한 방법입니다.</em>';
+    p.appendChild(m);
+    var row = el('div','row');
+    var h = el('div','held');
+    h.innerHTML = '<span class="g">' + c.g + '</span>' +
+                  '<span class="d"><b>' + c.n + '</b> — ' + c.d + '</span>';
+    row.appendChild(h);
+    p.appendChild(row);
+
+  } else if (S.phase === 'ready'){
+    p.appendChild(el('div','msg','줄이 준비됐습니다. 실행하면 값이 왼쪽에서 오른쪽으로 흐릅니다.'));
+    var r = el('div','row');
+    var b = el('button','act','실 행');
+    b.onclick = execute;
+    r.appendChild(b);
+    p.appendChild(r);
+
+  } else if (S.phase === 'reward'){
+    /* 카드를 누르는 것과 확정하는 것을 갈라놨다. 한 번 고르면 그 카드를 어디에
+       놓을지까지 이어지는데, 그 앞에서 잘못 눌러 되돌릴 수 없게 되면 억울하다.
+       고른 뒤에도 다른 카드 설명을 다시 읽어볼 수 있어야 해서 목록은 그대로 둔다 */
+    var m3 = el('div','msg');
+    m3.innerHTML = S.floor + '층 보상 — ' + E.CHOICES + '장 중 한 장을 고르고 <em>확인</em>을 누르세요.';
+    p.appendChild(m3);
+
+    var cs = el('div','cards');
+    S.choices.forEach(function(id){
+      var b = cardBtn(id, function(){
+        S.pick = (S.pick === id) ? null : id;      // 다시 누르면 선택 해제
+        drawPanel();
+      });
+      if (S.pick === id) b.classList.add('sel');
+      cs.appendChild(b);
+    });
+    p.appendChild(cs);
+
+    var dr = el('div','row'); dr.style.marginTop = '18px';
+    var okb = el('button','act', S.pick ? '「' + E.CARDS[S.pick].n + '」으로 확인' : '카드를 고르세요');
+    okb.disabled = !S.pick;
+    okb.onclick = function(){
+      if (!S.pick) return;
+      S.held = S.pick; S.pick = null; S.phase = 'place';
+      render();
+    };
+    var db = el('button','act ghost','카드 목록');
+    db.onclick = openDex;
+    dr.appendChild(okb); dr.appendChild(db);
+    p.appendChild(dr);
+
+  } else if (S.phase === 'repair'){
+    var m2 = el('div','msg');
+    m2.innerHTML = '<em>정비</em> — 두 칸을 골라 맞바꿀 수 있습니다. 이번 한 번뿐입니다.';
+    p.appendChild(m2);
+    var r2 = el('div','row');
+    var sk = el('button','act ghost','그냥 넘어가기');
+    sk.onclick = function(){ S.swapFrom = -1; afterRepair(); };
+    r2.appendChild(sk);
+    p.appendChild(r2);
+
+  } else if (S.phase === 'over'){
+    drawOver(p);
+  }
+}
+
+// ══════════════════════════════════ 진행
+function placeHeld(i){
+  S.line[i] = { id: S.held };
+  S.held = null;
+  if (S.tut){                       // 튜토리얼은 놓자마자 알아서 굴린다
+    S.phase = 'ready'; render();
+    setTimeout(execute, 420);
+    return;
+  }
+  takeNext();
+  render();
+}
+
+function execute(){
+  S.phase = 'anim';
+  drawLine();
+  document.getElementById('panel').innerHTML = '';
+  var res = E.run(S.line, S.tut ? E.mulberry32(4242) : execRnd(S.seed, S.floor), S.floor);
+  S.lastRes = res;
+  playTrace(res, function(){ S.tut ? tutFinish(res) : finishFloor(res); });
+}
+
+/* 값이 칸을 하나씩 통과하는 걸 그대로 보여준다. 되감기가 걸리면
+   인덱스가 뒤로 가는 게 화면에 그냥 보이는데, 그게 제일 좋은 설명이라 따로 안 꾸민다 */
+function playTrace(res, done){
+  var slots = document.querySelectorAll('#line .slot');
+  var t = res.trace, k = 0;
+  drawFlow(fmt(E.START_VALUE), '', '흐름 시작');
+  var step = function(){
+    if (k >= t.length){
+      setTimeout(function(){ done(); }, 380);
+      return;
+    }
+    var ev = t[k++];
+    for (var j=0;j<slots.length;j++) slots[j].classList.remove('lit');
+    var s = slots[ev.i];
+    if (!s){ step(); return; }
+    s.classList.add('lit','done');
+    var v = s.querySelector('.val');
+    if (ev.skipped){ s.classList.add('skipped'); v.textContent = '건너뜀'; }
+    else if (ev.muted){ s.classList.add('skipped'); v.textContent = '무효'; }
+    else if (ev.idle){ s.classList.add('idle'); v.textContent = '그대로'; }
+    else { s.classList.remove('idle'); v.textContent = fmt(ev.to); }
+    drawFlow(fmt(ev.to), '', (ev.i+1) + '번 칸 · ' + E.CARDS[ev.id].n);
+    setTimeout(step, t.length > 16 ? 110 : 190);
+  };
+  setTimeout(step, 320);
+}
+
+function finishFloor(res){
+  var goal = E.targetFor(S.floor);
+  var slots = document.querySelectorAll('#line .slot');
+  for (var j=0;j<slots.length;j++) slots[j].classList.remove('lit');
+
+  if (res.score < goal){
+    drawFlow(fmt(res.score), 'lose', '목표 ' + fmt(goal) + ' — ' + shortText(res.score, goal));
+    S.phase = 'over';
+    drawPanel();
+    return;
+  }
+  S.total += res.score;
+  drawFlow(fmt(res.score), 'win', S.floor + '층 통과 · 목표 ' + fmt(goal));
+
+  var grew = E.SLOT_GAIN_ON.indexOf(S.floor) >= 0 && S.line.length < E.SLOTS_MAX;
+  if (grew) S.line.push(null);
+
+  var repair = E.REPAIR_ON.indexOf(S.floor) >= 0;
+  setTimeout(function(){
+    document.getElementById('hTotal').textContent = fmt(S.total);
+    if (repair){ S.phase = 'repair'; S.swapFrom = -1; render(); }
+    else afterRepair();
+  }, 900);
+}
+
+function doSwap(i){
+  if (S.swapFrom < 0){ S.swapFrom = i; drawLine(); return; }
+  if (S.swapFrom === i){ S.swapFrom = -1; drawLine(); return; }
+  var a = S.line[S.swapFrom];
+  S.line[S.swapFrom] = S.line[i];
+  S.line[i] = a;
+  S.swapFrom = -1;
+  afterRepair();
+}
+
+function afterRepair(){
+  S.floor++;
+  S.choices = E.rollChoices(S.floor, S.offer, E.CHOICES);
+  S.pick = null;
+  S.phase = 'reward';
+  render();
+}
+
+// ══════════════════════════════════ 결과
+function lineText(){
+  return S.line.map(function(c){ return c ? E.CARDS[c.id].g : '·'; }).join(' ');
+}
+function shareText(){
+  return '한 줄 ' + (S.daily ? '#' + E.dayNumber() : '자유 ' + S.seed.toString(36)) + '\n' +
+         (S.floor-1) + '층 · ' + fmt(S.total) + '점\n' +
+         lineText();
+}
+function drawOver(p){
+  var reached = S.floor - 1;
+  var first = null;
+  if (S.daily){
+    first = readRec();
+    writeRec({ floor:reached, total:S.total, line:lineText() });
+  }
+  var m = el('div','msg');
+  m.innerHTML = '<em>' + reached + '층에서 멈췄습니다.</em> 총점 ' + fmt(S.total) + '점';
+  p.appendChild(m);
+
+  var pre = el('pre','share', shareText());
+  p.appendChild(pre);
+
+  var r = el('div','row');
+  var cp = el('button','act','결과 복사');
+  cp.onclick = function(){
+    navigator.clipboard.writeText(shareText()).then(function(){
+      cp.textContent = '복사됨';
+      setTimeout(function(){ cp.textContent = '결과 복사'; }, 1400);
+    });
+  };
+  r.appendChild(cp);
+  var again = el('button','act ghost', S.daily ? '자유 모드로 한 판 더' : '한 판 더');
+  again.onclick = function(){ newGame(false); };
+  r.appendChild(again);
+  p.appendChild(r);
+
+  var h = el('div','hint');
+  h.innerHTML = S.daily
+    ? (first
+        ? '오늘 기록은 이미 <b style="color:var(--fg)">' + first.floor + '층 · ' +
+          fmt(first.total) + '점</b>으로 남아 있습니다. 이번 판은 연습입니다.'
+        : '오늘의 시드는 모두 같습니다. 같은 카드가 같은 순서로 나왔으니, 차이는 어디에 뒀느냐뿐입니다.')
+    : '자유 모드는 매번 다른 시드로 돕니다. 기록 비교는 데일리로 하세요.';
+  p.appendChild(h);
+}
+
+
+// ══════════════════════════════════ 튜토리얼
+/* 규칙을 글로 읽히지 않는다. 다섯 단계 전부 "한 칸만 잘못 놓으면 목표를 못 넘는"
+   상황으로 짜서, 틀리면 왜 틀렸는지가 화면에 남게 했다.
+   각 단계는 정답 칸이 하나뿐이고 운 카드는 안 쓴다 — 배우는 중에 운이 끼면
+   자기가 뭘 잘못했는지 알 수가 없다 */
+var TUT = [
+  {
+    line: ['add7', null, null, null], card: null, goal: 5,
+    text: '값은 <em>1</em>에서 시작해 왼쪽에서 오른쪽으로 흐릅니다.<br>' +
+          '지금 줄에는 <em>+7</em> 하나뿐입니다. 실행해 보세요.',
+    pass: '1이 7을 만나 <em>8</em>이 됐습니다. 끝에 남은 값이 그 층의 점수입니다.'
+  },
+  {
+    line: ['add7', null, 'add12', null], card: 'mul2', goal: 40,
+    text: '이번엔 <em>×2</em>를 놓습니다. 목표는 <em>40</em>.<br>' +
+          '칸에 마우스를 올리면 그 자리에 놨을 때의 결과가 미리 보입니다.',
+    pass: '<em>이 게임의 전부입니다.</em> 2번 칸에 놨다면 8에 곱해져 28에서 끝났습니다.<br>' +
+          '같은 카드가 자리 하나로 값이 갈립니다 — 곱셈은 뒤로.',
+    fail: '앞에 놓으면 아직 작은 값에 곱해집니다. 더 뒤 칸을 보세요.'
+  },
+  {
+    line: [null, 'add7', null, null], card: 'odd15', goal: 22,
+    text: '<em>홀+15</em>는 값이 홀수일 때만 발동합니다. 목표는 <em>22</em>.<br>' +
+          '그런데 값이 홀수인지 짝수인지는 <em>앞칸이 정합니다.</em>',
+    pass: '시작값 1은 홀수라 발동했습니다. 뒤에 놨다면 8은 짝수라 아무 일도 없었죠.<br>' +
+          '<em>무조건 뒤가 좋은 게 아닙니다.</em> 조건 카드는 앞칸이 만든 값에 반응합니다.',
+    fail: '뒤쪽은 이미 짝수라 발동하지 않습니다. 값이 아직 홀수인 곳은 어디일까요.'
+  },
+  {
+    line: ['add3', 'add7', 'add12', 'add30'], card: 'mul5', goal: 100,
+    text: '줄이 꽉 찼습니다. 그래도 카드는 놓아야 합니다 — <em>이미 찬 칸에 놓으면 덮어씁니다.</em><br>' +
+          '무엇을 희생할지 고르세요. 목표는 <em>100</em>.',
+    pass: '마지막 <em>+30</em>을 버리고 그 자리를 <em>×5</em>가 가져갔습니다.<br>' +
+          '덮어쓰기가 이 게임에서 카드를 지우는 유일한 방법입니다.',
+    fail: '앞쪽을 덮으면 곱할 값이 그만큼 줄어듭니다. 가장 덜 아까운 칸은 어디일까요.'
+  },
+  {
+    /* 통과할 수 없는 단계. 규칙을 글로 읽히는 대신 한 번 당해보게 한다 */
+    line: ['add7', 'mul2', null, null], card: 'mul2', goal: 1e9, always: true,
+    text: '이번엔 <em>×2</em>인데, 2번 칸에 이미 <em>×2</em>가 있습니다.<br>' +
+          '아무 칸에나 놓아 보세요.',
+    pass: '<em>같은 카드는 더 앞의 것만 발동합니다.</em> 뒤에 놓은 쪽은 「무효」가 찍히고 ' +
+          '그 판 내내 빈 칸과 똑같습니다.<br>' +
+          '보상에 이미 가진 카드가 나오면 경고가 뜹니다 — 그때는 다른 걸 고르세요.<br>' +
+          '<em>딱 하나 예외가 「복제」입니다.</em> 복제는 여러 장 가질 수 있습니다. ' +
+          '다만 복제는 <em>바로 앞 칸</em>만 베끼기 때문에, 이어 붙이면 두 번째부터는 ' +
+          '복제를 복제하는 꼴이라 죽습니다 — 사이사이에 다른 카드를 끼워야 합니다.'
+  },
+  {
+    line: [null, 'add7', 'mul3', null], card: 'rew2', goal: 90, loops: 1,
+    text: '<em>↩2</em>는 두 칸 왼쪽으로 돌아가 그 구간을 다시 흐르게 합니다.<br>' +
+          '한 판에 <em>한 번뿐</em>입니다. 목표는 <em>90</em>.',
+    pass: '<em>+7 ×3</em> 구간이 한 번 더 돌아 24가 93이 됐습니다.<br>' +
+          '되감기를 어디에 두느냐가 곧 <em>무엇을 반복할 것인가</em>입니다.',
+    fail: '되감기가 앞에 있으면 되돌릴 구간 자체가 없습니다. 반복시키고 싶은 것 뒤에 두세요.'
+  },
+  {
+    end: true,
+    text: '끝입니다. 본편에서는 이렇게 이어집니다.<br><br>' +
+          '층을 넘길 때마다 카드 <em>3장 중 1장</em>을 골라 어느 칸에든 놓습니다.<br>' +
+          '칸은 2·4·6·8·10층에서 하나씩 늘고, 3·6·9층에는 <em>정비</em>로 두 칸을 맞바꿀 수 있습니다.<br>' +
+          '목표는 층마다 가파르게 오릅니다 — 20, 40, 130, <em>900</em>, 5,000 …<br><br>' +
+          '<em>그리고 여기서 놓은 카드는 되돌릴 수 없습니다.</em>'
+  }
+];
+
+function startTut(){
+  document.getElementById('stage').classList.remove('idle');
+  S = { tut:null, daily:false, seed:0, floor:1, total:0, line:[], held:null,
+        pick:null, phase:'place', choices:null, swapFrom:-1, lastRes:null };
+  loadStep(0);
+}
+
+function loadStep(i){
+  var d = TUT[i];
+  S.tut = { i:i, def:d };
+  if (d.end){
+    S.line = [];
+    S.phase = 'end';
+    document.getElementById('stage').classList.add('idle');
+    render();
+    return;
+  }
+  document.getElementById('stage').classList.remove('idle');
+  S.line = d.line.map(function(x){ return x ? { id:x } : null; });
+  S.held = d.card || null;
+  S.phase = S.held ? 'place' : 'ready';
+  render();
+}
+
+function tutFinish(res){
+  var slots = document.querySelectorAll('#line .slot');
+  for (var j=0;j<slots.length;j++) slots[j].classList.remove('lit');
+  var d = S.tut.def;
+  var ok = d.always || res.score >= d.goal;
+  S.phase = ok ? 'pass' : 'fail';
+  drawFlow(fmt(res.score), d.always ? '' : (ok ? 'win' : 'lose'),
+    d.always ? '무효인 칸은 아무 일도 하지 않습니다'
+             : (ok ? '목표 ' + fmt(d.goal) + ' 통과'
+                   : '목표 ' + fmt(d.goal) + ' — ' + shortText(res.score, d.goal)));
+  drawPanel();
+}
+
+function tutPanel(p){
+  var d = S.tut.def;
+
+  if (S.phase === 'end'){
+    var t = el('div','title');
+    t.innerHTML = '<h1>준비됐습니다</h1><p>' + d.text + '</p>';
+    p.appendChild(t);
+    var re = el('div','row');
+    var a = el('button','act','오늘의 판');
+    a.onclick = function(){ newGame(true); };
+    var b = el('button','act ghost','자유 모드');
+    b.onclick = function(){ newGame(false); };
+    var c = el('button','act ghost','튜토리얼 다시');
+    c.onclick = startTut;
+    re.appendChild(a); re.appendChild(b); re.appendChild(c);
+    p.appendChild(re);
+    return;
+  }
+
+  var m = el('div','msg');
+  m.innerHTML = (S.phase === 'fail' ? d.fail : (S.phase === 'pass' ? d.pass : d.text));
+  p.appendChild(m);
+
+  var r = el('div','row');
+  if (S.phase === 'place'){
+    var c2 = E.CARDS[S.held];
+    var h = el('div','held');
+    h.innerHTML = '<span class="g">' + c2.g + '</span>' +
+                  '<span class="d"><b>' + c2.n + '</b> — ' + c2.d + '</span>';
+    r.appendChild(h);
+  } else if (S.phase === 'ready'){
+    var run = el('button','act','실 행');
+    run.onclick = execute;
+    r.appendChild(run);
+  } else if (S.phase === 'pass'){
+    var nx = el('button','act', S.tut.i === TUT.length-2 ? '마무리' : '다음');
+    nx.onclick = function(){ loadStep(S.tut.i + 1); };
+    r.appendChild(nx);
+  } else if (S.phase === 'fail'){
+    var rt = el('button','act','다시 놓기');
+    rt.onclick = function(){ loadStep(S.tut.i); };
+    r.appendChild(rt);
+  }
+  p.appendChild(r);
+
+  var sk = el('div','hint');
+  var a2 = el('a', null, '튜토리얼 건너뛰기');
+  a2.href = 'javascript:void 0';
+  a2.style.cssText = 'color:var(--dim); text-decoration:underline; cursor:pointer';
+  a2.onclick = function(){ title(); };
+  sk.appendChild(a2);
+  p.appendChild(sk);
+}
+
+// ══════════════════════════════════ 카드 목록
+/* 보상에서 뭘 고를지 정하기 전에 전체를 훑어볼 수 있어야 한다.
+   후보 넉 장의 설명만 보고 고르라고 하면, 지금 안 나온 카드와 견줄 수가 없다 */
+function openDex(){
+  var d = document.getElementById('dex'), w = d.querySelector('.wrap');
+  w.innerHTML = '';
+  var cl = el('button','act ghost close','닫기');
+  cl.onclick = function(){ d.classList.remove('on'); };
+  w.appendChild(cl);
+  w.appendChild(el('h2', null, '카드 ' + E.CARD_IDS.length + '종'));
+  var sub = el('div','sub');
+  sub.innerHTML = '값은 <b style="color:var(--fg)">1</b>에서 시작해 왼쪽 칸부터 차례로 통과합니다. ' +
+    '끝에 남은 값이 그 층의 점수입니다.<br>' +
+    '<b style="color:var(--ac)">같은 카드를 두 장 놓으면 더 앞의 것만 발동합니다.</b> ' +
+    '뒤의 것은 그 판 내내 아무 일도 하지 않습니다.';
+  w.appendChild(sub);
+
+  ['common','uncommon','rare','legend'].forEach(function(r){
+    var ids = E.CARD_IDS.filter(function(id){ return E.CARDS[id].r === r; });
+    if (!ids.length) return;
+    w.appendChild(el('div','grp', E.RARITY[r] + ' · ' + ids.length + '종'));
+    var list = el('div','list');
+    ids.forEach(function(id){
+      var c = E.CARDS[id];
+      var it = el('div','it');
+      it.innerHTML = '<b>' + c.g + '</b><span>' + c.n + '</span><p>' + c.d + '</p>';
+      list.appendChild(it);
+    });
+    w.appendChild(list);
+  });
+  d.classList.add('on');
+}
+
+// ══════════════════════════════════ 시작 화면
+function title(){
+  S = { tut:null, daily:false, floor:1, total:0, line:[], phase:'title' };
+  document.getElementById('stage').classList.add('idle');
+  document.getElementById('line').innerHTML = '';
+  document.getElementById('flow').innerHTML = '';
+  var p = document.getElementById('panel');
+  p.innerHTML = '';
+  var t = el('div','title');
+  t.innerHTML = '<h1>한 줄</h1><p>값 하나가 왼쪽에서 오른쪽으로 흐르며 카드를 통과합니다.<br>' +
+    '끝에 남은 값이 그 층의 점수입니다.<br><br>' +
+    '<b style="color:var(--fg)">한 번 놓은 카드는 뺄 수 없습니다.</b> 같은 카드도 어느 칸에 있느냐로 값이 갈립니다.</p>';
+  p.appendChild(t);
+  var r = el('div','row');
+  var tu = el('button','act','튜토리얼');
+  tu.onclick = startTut;
+  var a = el('button','act ghost','오늘의 판');
+  a.onclick = function(){ newGame(true); };
+  var b = el('button','act ghost','자유 모드');
+  b.onclick = function(){ newGame(false); };
+  var dx = el('button','act ghost','카드 목록');
+  dx.onclick = openDex;
+  r.appendChild(tu); r.appendChild(a); r.appendChild(b); r.appendChild(dx);
+  p.appendChild(r);
+  var h = el('div','hint');
+  var rec = readRec();
+  h.innerHTML = (rec
+      ? '오늘 기록 — <b style="color:var(--fg)">' + rec.floor + '층 · ' +
+        fmt(rec.total) + '점</b> &nbsp; <span style="font-family:var(--mono)">' +
+        rec.line + '</span><br>'
+      : '') +
+    '오늘의 판은 접속한 모두가 같은 시드로 돕니다 — 나오는 카드도 순서도 같습니다.<br>' +
+    '그래서 점수 차이는 오로지 배치 차이입니다.';
+  p.appendChild(h);
+  document.getElementById('hFloor').textContent = '—';
+  document.getElementById('hGoal').textContent  = '—';
+  document.getElementById('hTotal').textContent = '—';
+  document.getElementById('hLoop').textContent  = '—';
+  document.getElementById('hMode').textContent  = '한 줄';
+}
+title();
+</script>
+</body>
+</html>
