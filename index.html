@@ -128,6 +128,26 @@ pre.share{font:12.5px/1.7 var(--mono); background:#39372e; border:1px solid var(
   border-radius:3px; padding:14px 16px; white-space:pre-wrap; word-break:break-all;
   color:var(--fg); margin:0 auto 16px; max-width:440px; text-align:left}
 .hint{text-align:center; font-size:12px; color:var(--dim); margin-top:14px; line-height:1.75}
+/* ── 시작 화면: 값이 왼쪽에서 오른쪽으로 카드를 타고 흐르는 모습 */
+.tline{display:flex; gap:6px; justify-content:center; margin:0 auto 24px; max-width:400px}
+.tline i{
+  flex:1 1 0; max-width:46px; aspect-ratio:3/4; border:1px solid var(--line); border-radius:3px;
+  background:#333128; position:relative;
+  animation:tin .5s cubic-bezier(.2,.8,.3,1) var(--di) backwards, tflow 3.2s ease-in-out var(--d) infinite;
+}
+.tline i::after{content:''; position:absolute; left:0; right:0; bottom:6px; height:2px; margin:0 8px;
+  background:var(--ac); border-radius:2px; opacity:0; animation:tval 3.2s ease-in-out var(--d) infinite}
+@keyframes tin{from{opacity:0; translate:0 10px}}
+@keyframes tflow{
+  0%,100%{border-color:var(--line); background:#333128; transform:none}
+  10%{border-color:var(--ac); background:#54301f; transform:translateY(-4px)}
+  28%{border-color:var(--line2); background:#403d33; transform:none}
+}
+@keyframes tval{0%,100%{opacity:0} 10%{opacity:1} 34%{opacity:.35}}
+.title.home h1{font-size:42px; letter-spacing:-.03em; animation:tin .5s cubic-bezier(.2,.8,.3,1) .1s backwards}
+.title.home p{animation:tin .5s cubic-bezier(.2,.8,.3,1) .22s backwards}
+.row.home button{animation:tin .45s cubic-bezier(.2,.8,.3,1) var(--di) backwards}
+@media (prefers-reduced-motion:reduce){.tline i,.tline i::after,.title.home h1,.title.home p,.row.home button{animation:none}}
 .title{text-align:center; margin-bottom:26px}
 .title h1{font:600 30px/1.2 -apple-system,sans-serif; letter-spacing:-.02em; margin-bottom:10px}
 .title p{color:var(--dim); font-size:13.5px; line-height:1.8}
@@ -755,12 +775,21 @@ function title(){
   document.getElementById('flow').innerHTML = '';
   var p = document.getElementById('panel');
   p.innerHTML = '';
-  var t = el('div','title');
+  // 카드 일곱 장이 왼쪽부터 차례로 켜진다 — 값이 줄을 타고 흐르는 그림
+  var tl = el('div','tline');
+  for (var i = 0; i < 7; i++){
+    var c = document.createElement('i');
+    c.style.setProperty('--d', (i * .3) + 's');
+    c.style.setProperty('--di', (i * .06) + 's');
+    tl.appendChild(c);
+  }
+  p.appendChild(tl);
+  var t = el('div','title home');
   t.innerHTML = '<h1>한 줄</h1><p>값 하나가 왼쪽에서 오른쪽으로 흐르며 카드를 통과합니다.<br>' +
     '끝에 남은 값이 그 층의 점수입니다.<br><br>' +
     '<b style="color:var(--fg)">한 번 놓은 카드는 뺄 수 없습니다.</b> 같은 카드도 어느 칸에 있느냐로 값이 갈립니다.</p>';
   p.appendChild(t);
-  var r = el('div','row');
+  var r = el('div','row home');
   var tu = el('button','act','튜토리얼');
   tu.onclick = startTut;
   var a = el('button','act ghost','오늘의 판');
@@ -770,6 +799,7 @@ function title(){
   var dx = el('button','act ghost','카드 목록');
   dx.onclick = openDex;
   r.appendChild(tu); r.appendChild(a); r.appendChild(b); r.appendChild(dx);
+  [].forEach.call(r.children, function(btn, i){ btn.style.setProperty('--di', (.36 + i * .07) + 's'); });
   p.appendChild(r);
   var h = el('div','hint');
   var rec = readRec();
