@@ -1,4 +1,6 @@
-# 한 줄
+# 🃏 한 줄
+
+![종류](https://img.shields.io/badge/%EC%A2%85%EB%A5%98-%EB%A1%9C%EA%B7%B8%EB%9D%BC%EC%9D%B4%ED%81%AC-c2453a?style=flat-square) ![인원](https://img.shields.io/badge/%EC%9D%B8%EC%9B%90-1%EC%9D%B8-555?style=flat-square) [![플레이](https://img.shields.io/badge/%ED%94%8C%EB%A0%88%EC%9D%B4-41ways.github.io/oneline--cal-d8332b?style=flat-square)](https://41ways.github.io/oneline-cal/) [![허브](https://img.shields.io/badge/%ED%97%88%EB%B8%8C-41ways%EC%9D%98%20%EB%A0%88%EB%93%9C%EB%B2%84%ED%8A%BC-b4571f?style=flat-square)](https://41ways.github.io/norara/)
 
 카드 로그라이크. 값 하나가 줄의 왼쪽에서 오른쪽으로 흐르며 카드를 통과하고,
 끝에 남은 값이 그 층의 점수다. 목표를 못 넘으면 종료 — 몇 층까지 갔나가 기록.
@@ -8,6 +10,20 @@
 ```bash
 open index.html
 ```
+
+## 한눈에
+
+| | |
+|---|---|
+| **종류** | 로그라이크 · 싱글 |
+| **인원** | 1인 |
+| **시간** | 한 판 10분 안팎 |
+| **플레이** | **https://41ways.github.io/oneline-cal/** |
+| **로컬 실행** | `open index.html` |
+| **한 줄 규칙** | 값 하나가 왼쪽에서 오른쪽으로 카드를 통과한다. 한 번 놓은 카드는 못 뺀다 |
+| **허브** | https://41ways.github.io/norara/ |
+
+**목차** — [이 게임의 두 문장](#이-게임의-두-문장) · [파일](#파일) · [규칙](#규칙) · [튜토리얼](#튜토리얼) · [카드 추가하는 법](#카드-추가하는-법) · [밸런스 — 시뮬레이터가 잡아낸 것들](#밸런스--시뮬레이터가-잡아낸-것들) · [아직 없는 것](#아직-없는-것)
 
 ## 이 게임의 두 문장
 
