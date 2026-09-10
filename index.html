@@ -319,6 +319,10 @@ function drawLine(){
         s.onclick = function(){ placeHeld(i); };
         s.onmouseenter = function(){ previewAt(i); };
         s.onmouseleave = function(){ drawFlow(); };
+        // 손가락에는 mouseenter 가 없다. 그대로 두면 휴대폰에서는 미리보기를 아예 못 본다.
+        // 누르고 있는 동안 미리 보여 주고, 떼면 원래대로 돌린다.
+        s.onpointerdown = function(e){ if (e.pointerType !== 'mouse') previewAt(i); };
+        s.onpointercancel = function(){ drawFlow(); };
       } else if (S.phase === 'repair'){
         s.classList.add('pick');
         if (S.swapFrom === i) s.classList.add('sel');
