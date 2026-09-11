@@ -17,8 +17,31 @@ var SLOTS_MAX   = 10;     // 칸 수 상한 (이 이상은 보상으로도 안 �
    층 목표 증가율을 압도한다 — 5층쯤 값 천장에 붙고 그 뒤 배치가 무의미해짐.
    1이면 되감기 카드가 "아껴 쓰는 한 방"이 되어 어디에 박느냐가 더 중요해진다 */
 var LOOP_BUDGET = 1;
+/* 무한 모드(9층~)에 들어서면 되감기가 늘어난다 — 9층에 +1, 그 뒤 LOOP_STEP 층마다 +1.
+   한 줄 점수의 상한은 "한 판에 제곱이 몇 번 걸리나"가 정하고, 그건 되감기 바퀴 수다
+   (제곱 1장 + 바로 뒤 복제 1장 = 한 바퀴에 2번). 되감기가 1번뿐이던 때는 잘 두는 판이
+   전부 10^200~10^375, 23~27층 한 구간에 몰려 멈췄다 — "다 상한에 닿는다"는 말이 나온 이유.
+   되감기 한 번이 자릿수 ×4 라, 깊이 갈수록 늘려주면 상한도 같이 올라간다.
+   본편(1~8층)은 그대로 1번이다. 여길 건드리면 데일리 초반 전멸률이 다 흔들린다.
+
+   되감기만 늘리면 줄이 목표보다 빨리 커져 판이 안 끝난다(8층마다 +1 로 해도
+   잘 두는 판 다섯에 하나가 150층까지 살아 있었다). 그래서 되감기가 늘 때마다
+   목표 자릿수도 ENDLESS_JUMP 배 뛴다 — 늘어난 되감기를 제곱에 걸어 쓰는 줄만
+   따라가고, 못 쓰는 줄은 거기서 떨어진다.
+   9층의 첫 +1 은 도약 없이 공짜로 준다. 거기서부터 뛰게 했더니 8층을 넘긴
+   판의 9층 통과율이 92% → 74% 로 떨어져, 본편 끝이 절벽이 됐다.
+   잘 두는 사람 기준(sim, 100판)으로
+     되감기 고정        9층 92% · 상위10% 25층 · 최고 28층 · 총점 최고 10^365
+     3층마다 · ×3.3     9층 92% · 상위10% 43층 · 최고 46층 · 총점 최고 10^(2×10^10) */
+var LOOP_STEP = 3;
+var ENDLESS_JUMP = 3.3;
+function loopBudgetFor(floor){
+  floor = floor || 1;
+  if (floor <= TARGETS.length || !LOOP_STEP) return LOOP_BUDGET;     // LOOP_STEP 0 이면 안 늘어남
+  return LOOP_BUDGET + 1 + Math.floor((floor - TARGETS.length - 1) / LOOP_STEP);
+}
 var START_VALUE = 1;      // 줄에 들어가는 최초의 값
-var STEP_CAP    = 300;    // 무한루프 방지용 실행 상한 (정상 플레이론 절대 안 닿음)
+var STEP_CAP    = 3000;   // 무한루프 방지용 실행 상한 (무한 모드 깊은 층의 되감기까지 넉넉히)
 var REPAIR_ON   = [3,6,9,12];  // 정비 단계가 붙는 층 (두 칸 맞바꾸기 1회)
 /* 칸은 보상으로 고르는 게 아니라 정해진 층에서 그냥 늘어난다.
    "카드 받을래 칸 받을래"를 물으면 답이 뻔해서(칸은 당장 점수가 0) 선택이 안 됨.
@@ -135,6 +158,7 @@ function targetV(floor){               // floor는 1부터
   if (floor <= TARGETS.length) return V(TARGETS[floor-1]);
   var L = Math.log10(TARGETS[TARGETS.length-1]);
   for (var i=TARGETS.length; i<floor; i++) L = L * ENDLESS_POW;
+  L = L * Math.pow(ENDLESS_JUMP, Math.max(0, loopBudgetFor(floor) - LOOP_BUDGET - 1));   // 첫 +1 은 공짜
   return vSetL({ n:0, L:0 }, L);
 }
 function passes(v, floor){ return vCmp(v, targetV(floor)) >= 0; }
@@ -317,8 +341,8 @@ function mutedAt(line, i){
 /* 되감기 계열이 줄에 몇 장인지 / 이 판에서 몇 번이나 쓸 수 있는지.
    카드가 예산보다 많으면 뒤쪽 되감기는 돌긴 도는데 아무 일도 안 한다 —
    화면만 봐서는 그냥 안 먹는 카드로 보여서 미리 알려줘야 한다 */
-function loopAudit(line){
-  var cards = 0, budget = LOOP_BUDGET;
+function loopAudit(line, floor){
+  var cards = 0, budget = loopBudgetFor(floor);
   for (var k=0;k<line.length;k++){
     var c = line[k];
     if (!c || mutedAt(line, k)) continue;
@@ -346,7 +370,7 @@ var START_HAND = ['add3','add7','mul2'];
 function run(line, rnd, floor){
   var S = {
     floor: floor || 1,
-    v: V(START_VALUE), i: 0, mem: V(0), loops: LOOP_BUDGET,
+    v: V(START_VALUE), i: 0, mem: V(0), loops: loopBudgetFor(floor),
     inv: false, skip: false, jump: -1, last: -1, breathed: false, acted: false,
     line: line, rnd: rnd || Math.random, trace: [], loopUse: 0
   };
@@ -484,13 +508,21 @@ function dayNumber(d){
 function seedForDay(n){ return (n * 2654435761) >>> 0; }
 function dailySeed(d){ return seedForDay(dayNumber(d)); }
 
+/* 규칙 판 번호. 점수가 달라지는 규칙을 바꾸면 올린다.
+   순위 서버는 번호가 다른 제출을 받지 않는다 — 옛 규칙으로 둔 판을 새 규칙으로
+   재생하면 점수가 달라져서, 화면에서 본 것과 다른 기록이 남기 때문.
+     1  첫 순위 서버 (2026-09-11 오후)
+     2  무한 모드 되감기 증가 + 목표 도약, 총점에 마지막 층 점수 포함 */
+var RULES = 2;
+
 // ══════════════════════════════════ 내보내기
 var ENGINE = {
+  RULES:RULES, LOOP_STEP:LOOP_STEP, ENDLESS_JUMP:ENDLESS_JUMP,
   SLOTS_START:SLOTS_START, SLOTS_MAX:SLOTS_MAX, LOOP_BUDGET:LOOP_BUDGET,
   START_VALUE:START_VALUE, TARGETS:TARGETS, L_CAP:L_CAP,
   ENDLESS_POW:ENDLESS_POW, REPAIR_ON:REPAIR_ON, SLOT_GAIN_ON:SLOT_GAIN_ON,
   RARITY:RARITY, CARDS:CARDS, CARD_IDS:CARD_IDS, START_HAND:START_HAND, CHOICES:CHOICES,
-  run:run, expectedV:expectedV, execRnd:execRnd, expected:expected, targetFor:targetFor, mutedAt:mutedAt, haveIn:haveIn, loopAudit:loopAudit,
+  run:run, loopBudgetFor:loopBudgetFor, expectedV:expectedV, execRnd:execRnd, expected:expected, targetFor:targetFor, mutedAt:mutedAt, haveIn:haveIn, loopAudit:loopAudit,
   targetV:targetV, passes:passes,
   V:V, vFromL:function(L){ return vSetL({ n:0, L:0 }, L); }, vAdd:vAddV, vCmp:vCmp, vEq:vEq, vBig:vBig, vCopy:vCopy, vPack:vPack, vUnpack:vUnpack,
   rollChoices:rollChoices, weightFor:weightFor,
@@ -499,6 +531,7 @@ var ENGINE = {
      게임(index.html)은 절대 안 부른다 — 부르는 순간 데일리가 사람마다 달라짐 */
   setTargets:function(t,e){ TARGETS = t; if (e) ENDLESS_POW = e; },
   setLoopBudget:function(n){ LOOP_BUDGET = n; },
+  setLoopStep:function(n){ LOOP_STEP = n; },
   /* 내보내기 객체는 값을 복사해 간다. 안쪽 변수만 바꾸면 ENGINE.SLOTS_MAX 를
      읽는 쪽은 예전 값을 계속 본다 — 한 번 이걸로 시뮬레이터가 네 설정을
      전부 같은 결과로 뱉었다. 둘 다 맞춰준다 */

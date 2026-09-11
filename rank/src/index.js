@@ -2,7 +2,7 @@
    한 줄 — 데일리 순위 서버
 
    GET  /api/top?day=20707&me=<pid>   그날 순위 (위 20명 + 내 자리)
-   POST /api/submit                    { day, pid, name, moves }
+   POST /api/submit                    { rules, day, pid, name, moves }
 
    점수를 믿지 않는다. 브라우저가 보내는 건 "한 판 동안 둔 수"뿐이고,
    서버가 게임과 똑같은 engine.js 로 그 수순을 처음부터 다시 돌려 점수를
@@ -67,8 +67,8 @@ function replay(day, moves) {
   let floor = 1, cleared = 0;
   for (;;) {
     const res = E.run(line, E.execRnd(seed, floor), floor);
+    E.vAdd(total, res.v);                              // 못 넘은 층 점수도 총점에 (규칙 2)
     if (!E.passes(res.v, floor)) break;
-    E.vAdd(total, res.v);
     cleared = floor;
 
     const step = moves.floors[floor - 1];
@@ -157,6 +157,8 @@ export default {
         try { body = JSON.parse(raw); } catch (e) { return json({ error: 'JSON' }, 400, h); }
 
         const { day, pid, moves } = body || {};
+        /* 규칙이 다른 화면이 둔 판은 여기 엔진으로 재생하면 점수가 달라진다 */
+        if (body.rules !== E.RULES) return json({ error: '게임 규칙이 바뀌었습니다 — 새로고침한 뒤 다시 해 주세요' }, 409, h);
         if (!dayOk(day)) return json({ error: '오늘 판이 아님' }, 400, h);
         if (!pidOk(pid)) return json({ error: 'pid' }, 400, h);
         const name = cleanName(body.name);

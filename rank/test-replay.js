@@ -26,8 +26,8 @@ function playBot(day, rng) {
   let floor = 1; const total = E.V(0);
   for (;;) {
     const res = E.run(line, E.execRnd(seed, floor), floor);
+    E.vAdd(total, res.v);                                // 못 넘은 층 점수도 들어간다
     if (!E.passes(res.v, floor)) break;
-    E.vAdd(total, res.v);
     const step = { swap: null, pick: null, slot: -1 };
     if (E.SLOT_GAIN_ON.includes(floor) && line.length < E.SLOTS_MAX) line.push(null);
     if (E.REPAIR_ON.includes(floor) && rng() < 0.5) {
@@ -40,7 +40,7 @@ function playBot(day, rng) {
     step.slot = bestSlot(step.pick, floor);
     line[step.slot] = { id: step.pick };
     moves.floors.push(step);
-    if (floor > 60) break;
+    if (floor > 80) break;
   }
   return { moves, cleared: floor - 1, total };
 }
@@ -57,6 +57,36 @@ for (let day = 20600; day < 20720; day++) {
   }
 }
 console.log(`재생 일치 ${n}판 (가장 깊이 간 판 ${deepest}층)`);
+
+// ── 무한 모드 깊이: 잘 두는 봇(무작위 없음)으로 되감기가 여러 번 늘어나는 층까지
+function playGreedy(day) {
+  const seed = E.seedForDay(day), offer = E.mulberry32(seed);
+  const line = new Array(E.SLOTS_START).fill(null), moves = { start: [], floors: [] };
+  const best = (id, f) => { let b = 0, bv = -Infinity; for (let i = 0; i < line.length; i++) { const k = line[i]; line[i] = { id }; const v = E.expectedV(line, E.mulberry32(7), 3, f).L; line[i] = k; if (v > bv) { bv = v; b = i; } } return { b, bv }; };
+  for (const id of E.START_HAND) { const i = best(id, 1).b; moves.start.push(i); line[i] = { id }; }
+  let floor = 1; const total = E.V(0);
+  for (;;) {
+    const res = E.run(line, E.execRnd(seed, floor), floor);
+    E.vAdd(total, res.v);
+    if (!E.passes(res.v, floor)) break;
+    if (E.SLOT_GAIN_ON.includes(floor) && line.length < E.SLOTS_MAX) line.push(null);
+    floor++;
+    let pk = null, pv = -Infinity, ps = 0;
+    for (const c of E.rollChoices(floor, offer, E.CHOICES)) { const r = best(c, floor); if (r.bv > pv) { pv = r.bv; pk = c; ps = r.b; } }
+    line[ps] = { id: pk }; moves.floors.push({ swap: null, pick: pk, slot: ps });
+    if (floor > 90) break;
+  }
+  return { moves, cleared: floor - 1, total };
+}
+let deepN = 0, deepMax = 0, deepL = 0;
+for (let day = 20700; day < 20712; day++) {
+  const g = playGreedy(day);
+  const out = replay(day, JSON.parse(JSON.stringify(g.moves)));
+  assert.equal(out.cleared, g.cleared, `day ${day}: 깊은 판 층 수가 다름`);
+  assert.ok(E.vEq(out.total, g.total), `day ${day}: 깊은 판 총점이 다름`);
+  deepN++; if (g.cleared > deepMax) { deepMax = g.cleared; deepL = g.total.L; }
+}
+console.log(`무한 모드 깊은 판 ${deepN}판 재생 일치 (최고 ${deepMax}층 · 총점 10^${deepL >= 1e6 ? deepL.toExponential(2) : Math.round(deepL)})`);
 
 // ── 조작은 걸러지는가
 const day = 20707;

@@ -49,7 +49,8 @@ header .sp{flex:1}
 .slot.full{border-color:var(--line2); background:#403d33}
 .slot .g{font:600 13px/1.15 var(--mono); text-align:center; word-break:keep-all; padding:0 3px}
 .slot .idx{position:absolute; top:4px; left:5px; font:10px/1 var(--mono); color:#8a8679}
-.slot .val{position:absolute; bottom:5px; left:0; right:0; text-align:center;
+.slot .val{position:absolute; bottom:5px; left:2px; right:2px; text-align:center;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   font:11px/1 var(--mono); color:var(--ac); opacity:0; transition:opacity .1s}
 .slot.lit{border-color:var(--ac); background:#54301f; transform:translateY(-3px)}
 .slot.lit .val{opacity:1}
@@ -194,7 +195,7 @@ pre.share{font:12.5px/1.7 var(--mono); background:#39372e; border:1px solid var(
 <div id="dex"><div class="wrap"></div></div>
 
 <!-- 엔진은 버전을 붙여 부른다. Pages 캐시 때문에 새 화면이 옛 엔진을 받으면 깨진다 -->
-<script src="engine.js?v=20260911"></script>
+<script src="engine.js?v=20260911c"></script>
 <script>
 "use strict";
 var E = ENGINE;
@@ -279,6 +280,16 @@ function fmt(x){                      // 화면용 HTML
   var p = numParts(x);
   return p.t != null ? p.t : p.m + '<sup>' + p.e + '</sup>';
 }
+/* 칸 밑의 작은 숫자. 폭이 좁아 10^1,134,704,516 같은 건 칸 밖으로 넘친다.
+   거듭제곱 자리가 만 단위를 넘으면 만·억·조로 줄이고 앞자리는 뺀다 */
+function fmtS(x){
+  var p = numParts(x);
+  if (p.t != null) return p.t;
+  var e = Math.floor(toV(x).L);
+  if (e < 10000) return fmt(x);
+  var c = e >= 1e12 ? (e/1e12).toFixed(1) + '조' : e >= 1e8 ? (e/1e8).toFixed(1) + '억' : (e/1e4).toFixed(e < 1e5 ? 1 : 0) + '만';
+  return '10<sup>' + c + '</sup>';
+}
 function fmtT(x){                     // 복사·제목용 글자
   var p = numParts(x);
   return p.t != null ? p.t : p.m + '^' + p.e;
@@ -326,11 +337,10 @@ function render(){
   document.getElementById('hFloorLbl').textContent = S.tut ? '단계' : '층';
   document.getElementById('hGoal').innerHTML  =
     (goal == null || (S.tut && S.tut.def.always)) ? '—' : fmt(goal);
-  document.getElementById('hLoop').textContent  = E.LOOP_BUDGET;
   document.getElementById('hMode').textContent  =
     S.tut ? '튜토리얼' : (S.daily ? '데일리 #' + E.dayNumber() : '자유');
   document.getElementById('hTotal').innerHTML = S.tut ? '—' : fmt(S.total);
-  document.getElementById('hLoop').textContent  = S.tut ? (S.tut.def.loops || '—') : E.LOOP_BUDGET;
+  document.getElementById('hLoop').textContent  = S.tut ? (S.tut.def.loops || '—') : E.loopBudgetFor(S.floor);
 
   drawLine();
   drawFlow();
@@ -381,7 +391,7 @@ function drawFlow(txt, cls, sub){
     if (S.tut && S.phase !== 'place' && S.phase !== 'ready') return;
     var v = E.expectedV(S.line, prevRnd(), 9, S.floor);
     var goal = curGoal();
-    var au = E.loopAudit(S.line);
+    var au = E.loopAudit(S.line, S.floor);
     f.innerHTML = fmt(v) + '<small>' +
       (ge(v, goal) ? '지금 배치로 통과' : '목표까지 ' + shortText(v, goal)) +
       (au.over ? '  ·  ⚠ 되감기 카드 ' + au.cards + '장 / 쓸 수 있는 건 ' + au.budget + '번' : '') +
@@ -438,7 +448,14 @@ function drawPanel(){
        놓을지까지 이어지는데, 그 앞에서 잘못 눌러 되돌릴 수 없게 되면 억울하다.
        고른 뒤에도 다른 카드 설명을 다시 읽어볼 수 있어야 해서 목록은 그대로 둔다 */
     var m3 = el('div','msg');
-    m3.innerHTML = S.floor + '층 보상 — ' + E.CHOICES + '장 중 한 장을 고르고 <em>확인</em>을 누르세요.';
+    var lb = E.loopBudgetFor(S.floor), lbPrev = E.loopBudgetFor(S.floor - 1);
+    m3.innerHTML = S.floor + '층 보상 — ' + E.CHOICES + '장 중 한 장을 고르고 <em>확인</em>을 누르세요.' +
+      (lb > lbPrev
+        ? (S.floor === E.TARGETS.length + 1
+            ? '<br><em>무한 모드 — 이번 층부터 되감기 ' + lb + '번.</em> 이번 한 번은 덤이고, ' +
+              '앞으로 ' + E.LOOP_STEP + '층마다 한 번씩 늘 때는 목표도 같이 뜁니다.'
+            : '<br><em>이번 층부터 되감기 ' + lb + '번.</em> 목표도 같이 뜁니다 — 늘어난 되감기를 제곱에 걸어야 따라갑니다.')
+        : '');
     p.appendChild(m3);
 
     var cs = el('div','cards');
@@ -526,9 +543,9 @@ function playTrace(res, done){
     if (ev.skipped){ s.classList.add('skipped'); v.textContent = '건너뜀'; }
     else if (ev.muted){ s.classList.add('skipped'); v.textContent = '무효'; }
     else if (ev.idle){ s.classList.add('idle'); v.textContent = '그대로'; }
-    else { s.classList.remove('idle'); v.innerHTML = fmt(ev.to); }
+    else { s.classList.remove('idle'); v.innerHTML = fmtS(ev.to); }
     drawFlow(fmt(ev.to), '', (ev.i+1) + '번 칸 · ' + E.CARDS[ev.id].n);
-    setTimeout(step, t.length > 16 ? 110 : 190);
+    setTimeout(step, Math.max(22, Math.min(190, Math.floor(4200 / t.length))));
   };
   setTimeout(step, 320);
 }
@@ -538,13 +555,16 @@ function finishFloor(res){
   var slots = document.querySelectorAll('#line .slot');
   for (var j=0;j<slots.length;j++) slots[j].classList.remove('lit');
 
+  /* 못 넘은 층에서 낸 점수도 총점에 들어간다. 총점은 사실상 마지막 몇 층이
+     정하는데, 같은 층에서 멈춘 사람끼리는 그 마지막 한 번이 순위를 가른다 */
+  E.vAdd(S.total, res.v);
   if (!E.passes(res.v, S.floor)){
+    document.getElementById('hTotal').innerHTML = fmt(S.total);
     drawFlow(fmt(res.v), 'lose', '목표 ' + fmt(goal) + ' — ' + shortText(res.v, goal));
     S.phase = 'over';
     drawPanel();
     return;
   }
-  E.vAdd(S.total, res.v);
   S.stepCur = { swap:null, pick:null, slot:-1 };   // 이 층을 넘긴 뒤 둘 수를 모은다
   drawFlow(fmt(res.v), 'win', S.floor + '층 통과 · 목표 ' + fmt(goal));
 
@@ -599,7 +619,8 @@ function drawOver(p){
   /* 머리의 층 표시는 "지금 도전 중인 층"이라 못 넘은 층(예: 28)이 떠 있다.
      예전엔 여기서 "27층에서 멈췄습니다"라고 해서 숫자가 서로 안 맞아 보였다 */
   var m = el('div','msg');
-  m.innerHTML = '<em>' + S.floor + '층에서 멈췄습니다</em> — ' + reached + '층까지 통과, 총점 ' + fmt(S.total);
+  m.innerHTML = '<em>' + S.floor + '층에서 멈췄습니다</em> — ' + reached + '층까지 통과, 총점 ' + fmt(S.total) +
+                ' <span style="color:var(--dim)">(멈춘 층 점수 포함)</span>';
   p.appendChild(m);
 
   var pre = el('pre','share', shareText());
@@ -694,7 +715,8 @@ var TUT = [
     text: '끝입니다. 본편에서는 이렇게 이어집니다.<br><br>' +
           '층을 넘길 때마다 카드 <em>3장 중 1장</em>을 골라 어느 칸에든 놓습니다.<br>' +
           '칸은 2·4·6·8·10층에서 하나씩 늘고, 3·6·9층에는 <em>정비</em>로 두 칸을 맞바꿀 수 있습니다.<br>' +
-          '목표는 층마다 가파르게 오릅니다 — 20, 40, 130, <em>900</em>, 5,000 …<br><br>' +
+          '목표는 층마다 가파르게 오릅니다 — 20, 40, 130, <em>1,300</em>, 4,500 …<br>' +
+          '8층을 넘으면 무한 모드 — 3층마다 <em>되감기가 한 번씩 늘고</em> 목표도 같이 뜁니다.<br><br>' +
           '<em>그리고 여기서 놓은 카드는 되돌릴 수 없습니다.</em>'
   }
 ];
@@ -826,7 +848,7 @@ function openDex(){
 // ══════════════════════════════════ 순위
 /* 순위 서버는 Cloudflare Worker(oneline-rank, 저장소 rank/ 폴더). 허브 채팅과 따로 논다.
    서버는 점수를 믿지 않고 S.moves 를 엔진으로 다시 돌려 직접 계산한다.
-   다른 서버에 붙여 시험하려면 주소 뒤에 ?api=http://localhost:8799 */
+   다른 서버에 붙여 시험하려면 주소 뒤에 ?api=http://localhost:8811 */
 var RANK_API = (function(){
   try { var q = new URLSearchParams(location.search).get('api'); if (q) return q.replace(/\/$/, ''); } catch(e){}
   return 'https://oneline-rank.41ways.workers.dev';
@@ -918,7 +940,7 @@ function submitRun(name, sec){
   sec.appendChild(el('div','hint','순위에 올리는 중…'));
   rankFetch('/api/submit', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ day: E.dayNumber(), pid: myPid(), name: name, moves: S.moves })
+    body: JSON.stringify({ rules: E.RULES, day: E.dayNumber(), pid: myPid(), name: name, moves: S.moves })
   }).then(function(b){
     sec.innerHTML = '';
     var head = el('div','msg');

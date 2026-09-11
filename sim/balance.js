@@ -107,8 +107,8 @@ function playRun(seed, arch){
     var res = E.run(line, execRnd(seed, floor), floor);
     var ok = E.passes(res.v, floor);
     hist.push({ floor:floor, score:res.v, target:E.targetV(floor), ok:ok });
+    E.vAdd(total, res.v);                               // 못 넘은 층 점수도 총점에
     if (!ok) break;
-    E.vAdd(total, res.v);
 
     if (E.SLOT_GAIN_ON.indexOf(floor) >= 0 && line.length < E.SLOTS_MAX) line.push(null);
     if (E.REPAIR_ON.indexOf(floor) >= 0) repair(line, arch, evalR);
