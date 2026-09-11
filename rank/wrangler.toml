@@ -1,0 +1,21 @@
+# 한 줄 — 데일리 순위 서버 (Cloudflare Workers 무료 플랜 + D1)
+#
+# 허브 채팅(norara-chat)과는 아무것도 나누지 않는 별개 Worker 다.
+# 저장소를 Durable Object 가 아니라 D1 으로 한 건, 채팅·게임 서버가 나눠 쓸
+# Durable Object 무료 시간(하루 13,000 GB-s)을 순위표가 갉아먹지 않게 하려고.
+# D1 무료 한도는 따로다(하루 읽기 500만 행, 쓰기 10만 행, 5GB).
+# 결제 수단을 등록하지 않았으므로 한도를 넘어도 요금이 붙지 않고 그날 요청만 거절된다.
+name = "oneline-rank"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+workers_dev = true
+
+[vars]
+# 제출(POST)을 받아줄 페이지 출처. 게임을 다른 주소로 옮기면 여기에 덧붙이면 된다.
+# localhost 는 코드에서 늘 허용한다. 순위 보기(GET)는 출처를 따지지 않는다.
+ALLOW_ORIGINS = "https://41ways.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oneline-rank"
+database_id = "b05373b4-e20a-4e33-86da-b096bbff8510"

@@ -66,6 +66,7 @@ header .sp{flex:1}
 
 /* ── 흐르는 값 */
 #flow{text-align:center; font:600 34px/1 var(--mono); letter-spacing:-.03em; min-height:40px}
+sup{font-size:.58em; vertical-align:.62em; line-height:0; letter-spacing:0; margin-left:.06em}
 #flow small{display:block; font:400 12px/1.6 -apple-system,sans-serif; letter-spacing:.1em; color:var(--dim); margin-top:8px}
 #flow.win{color:var(--ok)} #flow.lose{color:var(--ac)}
 
@@ -124,6 +125,21 @@ button.ghost:hover{border-color:var(--fg); opacity:1}
 #dex .it p{font-size:11.5px; line-height:1.5; color:var(--dim); margin-top:6px}
 #dex .close{position:sticky; top:0; float:right}
 
+/* ── 순위 */
+.ranksec{margin-top:24px; padding-top:18px; border-top:1px solid var(--line)}
+.rank table{width:100%; max-width:560px; margin:0 auto; border-collapse:collapse; font-size:13px}
+.rank td{padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:baseline}
+.rank td.r{width:2.6em; text-align:right; color:var(--dim); font-family:var(--mono)}
+.rank td.nm{word-break:break-all}
+.rank td.f{width:4.2em; text-align:right; color:var(--dim); white-space:nowrap}
+.rank td.t{text-align:right; font-family:var(--mono); white-space:nowrap}
+.rank tr.me td{color:var(--ac)}
+.rank tr.gap td{text-align:center; color:var(--dim); border:0; padding:2px}
+.namerow{display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap; margin:4px 0 12px}
+.namerow input{font:inherit; font-size:14px; padding:11px 12px; border-radius:3px; border:1px solid var(--line2);
+  background:#23221d; color:var(--fg); width:190px}
+.namerow input:focus{outline:none; border-color:var(--ac)}
+
 /* ── 결과 */
 pre.share{font:12.5px/1.7 var(--mono); background:#39372e; border:1px solid var(--line2);
   border-radius:3px; padding:14px 16px; white-space:pre-wrap; word-break:break-all;
@@ -177,7 +193,8 @@ pre.share{font:12.5px/1.7 var(--mono); background:#39372e; border:1px solid var(
 </div>
 <div id="dex"><div class="wrap"></div></div>
 
-<script src="engine.js"></script>
+<!-- 엔진은 버전을 붙여 부른다. Pages 캐시 때문에 새 화면이 옛 엔진을 받으면 깨진다 -->
+<script src="engine.js?v=20260911"></script>
 <script>
 "use strict";
 var E = ENGINE;
@@ -187,19 +204,25 @@ var E = ENGINE;
    exec  : 층을 실제로 굴릴 때. 층마다 독립적으로 만든다 —
            미리보기를 몇 번 눌렀는지가 결과를 바꾸면 데일리 비교가 깨진다
    prev  : 미리보기 전용. 결과에 아무 영향이 없다 */
-function execRnd(seed, floor){ return E.mulberry32((seed ^ (floor*7919)) >>> 0); }
 function prevRnd(){ return E.mulberry32(0x9e3779b9); }
 
 var S = null;
 
-function curGoal(){ return S.tut ? S.tut.def.goal : E.targetFor(S.floor); }
+function curGoal(){
+  if (S.tut) return S.tut.def.goal == null ? null : E.V(S.tut.def.goal);
+  return E.targetV(S.floor);
+}
 
 /* 데일리 기록은 그날의 첫 판만 남긴다. 다시 못 하게 막지는 않는다 —
    막아봐야 시크릿 창으로 열면 그만이고, 친구끼리 하는 판에서
    기록의 근거는 어차피 서로에 대한 신뢰라서 */
 function recKey(){ return 'oneline-d' + E.dayNumber(); }
 function readRec(){
-  try { return JSON.parse(localStorage.getItem(recKey()) || 'null'); } catch(e){ return null; }
+  try {
+    var r = JSON.parse(localStorage.getItem(recKey()) || 'null');
+    if (r) r.total = E.vUnpack(r.total);        // 예전 기록은 그냥 수로 들어 있다
+    return r;
+  } catch(e){ return null; }
 }
 function writeRec(r){
   try { if (!readRec()) localStorage.setItem(recKey(), JSON.stringify(r)); } catch(e){}
@@ -209,12 +232,15 @@ function newGame(daily){
   var seed = daily ? E.dailySeed() : (Math.random()*4294967295)>>>0;
   S = {
     tut: null,
-    daily: daily, seed: seed, floor: 1, total: 0,
+    daily: daily, seed: seed, floor: 1, total: E.V(0),
+    /* 한 판 동안 둔 수. 순위 서버는 점수를 믿지 않고 이걸 엔진으로 다시 돌려
+       직접 계산한다 — 그래서 여기 없는 수는 없던 일이 된다 */
+    moves: { start: [], floors: [] }, stepCur: null,
     line: new Array(E.SLOTS_START).fill(null),
     offer: E.mulberry32(seed),
     queue: E.START_HAND.slice(),   // 놓아야 할 카드 대기줄
     held: null, pick: null, phase: 'place', choices: null,
-    swapFrom: -1, lastRes: null, best: 0
+    swapFrom: -1, lastRes: null
   };
   document.getElementById('stage').classList.remove('idle');
   takeNext();
@@ -226,34 +252,48 @@ function takeNext(){
 }
 
 // ══════════════════════════════════ 표시 도우미
-/* 지수 카드에 상한이 없어서 점수가 1e300까지 간다. 한글 단위는 해(1e20)까지만
-   쓰고 그 위로는 10의 거듭제곱으로 — 「1자 3000양」 같은 건 아무도 못 읽는다 */
-var SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
-function supNum(e){
-  return String(e).split('').map(function(ch){ return SUP[+ch] || ch; }).join('');
-}
-function fmt(n){
-  if (!isFinite(n)) return '∞';
-  n = Math.floor(n);
-  if (n >= 1e20){
-    var e = Math.floor(Math.log10(n));
-    var m = n / Math.pow(10, e);
-    return m.toFixed(2) + '×10' + supNum(e);
+/* 값은 엔진의 { n, L } 쌍이다. 1e15 밑은 정확한 정수, 그 위는 자릿수(L)만 있다.
+   한글 단위는 경(1e16)까지만 쓰고 그 위로는 10의 거듭제곱으로.
+   거듭제곱 자리는 <sup> 에 보통 숫자로 쓴다 — 예전엔 ³⁰⁰ 같은 위첨자 문자를
+   썼는데, ¹²³ 만 대부분의 글꼴에 있고 ⁰⁴⁵…는 없어서 다른 글꼴로 대체되며
+   「10³ ⁰ ⁰」처럼 벌어져 보였다(제보 화면). 복사해서 붙이는 글에는 ^ 로 쓴다 */
+function toV(x){ return (typeof x === 'number') ? E.V(x) : x; }
+function numParts(x){
+  x = toV(x);
+  if (x.L === -Infinity) return { t:'0' };
+  var n = E.vBig(x) ? (x.L < 20 ? Math.pow(10, x.L) : null) : x.n;
+  if (n != null){
+    if (n >= 1e16) return { t:(n/1e16).toFixed(n/1e16 < 10 ? 2 : 1) + '경' };
+    if (n >= 1e12) return { t:(n/1e12).toFixed(n/1e12 < 10 ? 2 : 1) + '조' };
+    if (n >= 1e8)  return { t:(n/1e8).toFixed(n/1e8 < 10 ? 2 : 1) + '억' };
+    return { t:Math.floor(n).toLocaleString('ko-KR') };
   }
-  if (n >= 1e16) return (n/1e16).toFixed(n/1e16 < 10 ? 2 : 1) + '경';
-  if (n >= 1e12) return (n/1e12).toFixed(n/1e12 < 10 ? 2 : 1) + '조';
-  if (n >= 1e8)  return (n/1e8).toFixed(n/1e8 < 10 ? 2 : 1) + '억';
-  return n.toLocaleString('ko-KR');
+  var e = Math.floor(x.L), m = Math.pow(10, x.L - e);
+  if (m.toFixed(2) === '10.00'){ m = 1; e += 1; }
+  /* 자릿수 자체가 1e15 를 넘으면 정수로 못 적는다. 이 게임에서 닿을 일은 없지만
+     표현 한계(10^(1.8e308))까지 안 깨지게 */
+  if (e >= 1e15) return { m:'10', e:x.L.toExponential(2).replace('e+', '×10^') };
+  return { m:m.toFixed(2) + '×10', e:(e >= 10000 ? e.toLocaleString('en-US') : String(e)) };
+}
+function fmt(x){                      // 화면용 HTML
+  var p = numParts(x);
+  return p.t != null ? p.t : p.m + '<sup>' + p.e + '</sup>';
+}
+function fmtT(x){                     // 복사·제목용 글자
+  var p = numParts(x);
+  return p.t != null ? p.t : p.m + '^' + p.e;
 }
 /* 목표에 얼마나 못 미쳤나. 값이 커지면 뺄셈이 무의미해진다 —
    9.35×10²⁸ 목표에 5.85×10²⁴ 점이면 차이도 9.35×10²⁸ 이라
    "9.35×10²⁸ 모자랍니다"가 목표를 그대로 되뇌는 꼴이 된다.
-   열 배 넘게 벌어지면 배수로 말한다 */
+   열 배 넘게 벌어지면 배수로 말한다. 자릿수로 계산하니 목표가 아무리 커도 된다 */
 function shortText(v, goal){
-  var r = goal / Math.max(v, 1);
-  if (r < 10) return fmt(goal - v) + ' 모자랍니다';
-  return fmt(r) + '배 모자랍니다';
+  v = toV(v); goal = toV(goal);
+  var dL = goal.L - (v.L === -Infinity ? 0 : v.L);
+  if (dL < 1) return fmt(E.vFromL(goal.L + Math.log10(1 - Math.pow(10, -dL)))) + ' 모자랍니다';
+  return fmt(E.vFromL(dL)) + '배 모자랍니다';
 }
+function ge(a, b){ return E.vCmp(toV(a), toV(b)) >= 0; }
 
 function el(tag, cls, txt){
   var d = document.createElement(tag);
@@ -284,13 +324,12 @@ function render(){
   var goal = curGoal();
   document.getElementById('hFloor').textContent = S.tut ? (S.tut.i+1) + '/' + TUT.length : S.floor;
   document.getElementById('hFloorLbl').textContent = S.tut ? '단계' : '층';
-  document.getElementById('hGoal').textContent  =
+  document.getElementById('hGoal').innerHTML  =
     (goal == null || (S.tut && S.tut.def.always)) ? '—' : fmt(goal);
-  document.getElementById('hTotal').textContent = fmt(S.total);
   document.getElementById('hLoop').textContent  = E.LOOP_BUDGET;
   document.getElementById('hMode').textContent  =
     S.tut ? '튜토리얼' : (S.daily ? '데일리 #' + E.dayNumber() : '자유');
-  document.getElementById('hTotal').textContent = S.tut ? '—' : fmt(S.total);
+  document.getElementById('hTotal').innerHTML = S.tut ? '—' : fmt(S.total);
   document.getElementById('hLoop').textContent  = S.tut ? (S.tut.def.loops || '—') : E.LOOP_BUDGET;
 
   drawLine();
@@ -340,33 +379,32 @@ function drawFlow(txt, cls, sub){
   if (txt == null){
     if (S.phase === 'over' || S.phase === 'anim') return;   // 끝난 판을 다시 계산해 덮지 않음
     if (S.tut && S.phase !== 'place' && S.phase !== 'ready') return;
-    var v = E.expected(S.line, prevRnd(), 9, S.floor);
+    var v = E.expectedV(S.line, prevRnd(), 9, S.floor);
     var goal = curGoal();
-    f.textContent = fmt(v);
     var au = E.loopAudit(S.line);
-    f.appendChild(el('small', null,
-      (v >= goal ? '지금 배치로 통과' : '목표까지 ' + shortText(v, goal)) +
-      (au.over ? '  ·  ⚠ 되감기 카드 ' + au.cards + '장 / 쓸 수 있는 건 ' + au.budget + '번' : '')));
-    f.className = v >= goal ? 'win' : '';
+    f.innerHTML = fmt(v) + '<small>' +
+      (ge(v, goal) ? '지금 배치로 통과' : '목표까지 ' + shortText(v, goal)) +
+      (au.over ? '  ·  ⚠ 되감기 카드 ' + au.cards + '장 / 쓸 수 있는 건 ' + au.budget + '번' : '') +
+      '</small>';
+    f.className = ge(v, goal) ? 'win' : '';
   } else {
-    f.textContent = txt;
-    if (sub) f.appendChild(el('small', null, sub));
+    f.innerHTML = txt + (sub ? '<small>' + sub + '</small>' : '');
   }
 }
 
 function previewAt(i){
   var keep = S.line[i];
   S.line[i] = { id: S.held };
-  var v = E.expected(S.line, prevRnd(), 9, S.floor);
+  var v = E.expectedV(S.line, prevRnd(), 9, S.floor);
   S.line[i] = keep;
   var goal = curGoal();
   S.line[i] = { id: S.held };
   var spent = E.mutedAt(S.line, i);
   S.line[i] = keep;
-  drawFlow(fmt(v), v >= goal ? 'win' : '',
+  drawFlow(fmt(v), ge(v, goal) ? 'win' : '',
     (spent ? '⚠ 같은 카드가 앞칸에 있어 이 칸은 무효 · ' : '') +
     (keep ? E.CARDS[keep.id].n + ' 을(를) 덮어씀 · ' : '') +
-    (v >= goal ? '통과' : '목표까지 ' + shortText(v, goal)));
+    (ge(v, goal) ? '통과' : '목표까지 ' + shortText(v, goal)));
 }
 
 function drawPanel(){
@@ -444,6 +482,10 @@ function drawPanel(){
 
 // ══════════════════════════════════ 진행
 function placeHeld(i){
+  if (!S.tut && S.moves){
+    if (S.stepCur){ S.stepCur.pick = S.held; S.stepCur.slot = i; S.moves.floors.push(S.stepCur); S.stepCur = null; }
+    else S.moves.start.push(i);
+  }
   S.line[i] = { id: S.held };
   S.held = null;
   if (S.tut){                       // 튜토리얼은 놓자마자 알아서 굴린다
@@ -459,7 +501,7 @@ function execute(){
   S.phase = 'anim';
   drawLine();
   document.getElementById('panel').innerHTML = '';
-  var res = E.run(S.line, S.tut ? E.mulberry32(4242) : execRnd(S.seed, S.floor), S.floor);
+  var res = E.run(S.line, S.tut ? E.mulberry32(4242) : E.execRnd(S.seed, S.floor), S.floor);
   S.lastRes = res;
   playTrace(res, function(){ S.tut ? tutFinish(res) : finishFloor(res); });
 }
@@ -484,7 +526,7 @@ function playTrace(res, done){
     if (ev.skipped){ s.classList.add('skipped'); v.textContent = '건너뜀'; }
     else if (ev.muted){ s.classList.add('skipped'); v.textContent = '무효'; }
     else if (ev.idle){ s.classList.add('idle'); v.textContent = '그대로'; }
-    else { s.classList.remove('idle'); v.textContent = fmt(ev.to); }
+    else { s.classList.remove('idle'); v.innerHTML = fmt(ev.to); }
     drawFlow(fmt(ev.to), '', (ev.i+1) + '번 칸 · ' + E.CARDS[ev.id].n);
     setTimeout(step, t.length > 16 ? 110 : 190);
   };
@@ -492,25 +534,26 @@ function playTrace(res, done){
 }
 
 function finishFloor(res){
-  var goal = E.targetFor(S.floor);
+  var goal = E.targetV(S.floor);
   var slots = document.querySelectorAll('#line .slot');
   for (var j=0;j<slots.length;j++) slots[j].classList.remove('lit');
 
-  if (res.score < goal){
-    drawFlow(fmt(res.score), 'lose', '목표 ' + fmt(goal) + ' — ' + shortText(res.score, goal));
+  if (!E.passes(res.v, S.floor)){
+    drawFlow(fmt(res.v), 'lose', '목표 ' + fmt(goal) + ' — ' + shortText(res.v, goal));
     S.phase = 'over';
     drawPanel();
     return;
   }
-  S.total += res.score;
-  drawFlow(fmt(res.score), 'win', S.floor + '층 통과 · 목표 ' + fmt(goal));
+  E.vAdd(S.total, res.v);
+  S.stepCur = { swap:null, pick:null, slot:-1 };   // 이 층을 넘긴 뒤 둘 수를 모은다
+  drawFlow(fmt(res.v), 'win', S.floor + '층 통과 · 목표 ' + fmt(goal));
 
   var grew = E.SLOT_GAIN_ON.indexOf(S.floor) >= 0 && S.line.length < E.SLOTS_MAX;
   if (grew) S.line.push(null);
 
   var repair = E.REPAIR_ON.indexOf(S.floor) >= 0;
   setTimeout(function(){
-    document.getElementById('hTotal').textContent = fmt(S.total);
+    document.getElementById('hTotal').innerHTML = fmt(S.total);
     if (repair){ S.phase = 'repair'; S.swapFrom = -1; render(); }
     else afterRepair();
   }, 900);
@@ -522,6 +565,7 @@ function doSwap(i){
   var a = S.line[S.swapFrom];
   S.line[S.swapFrom] = S.line[i];
   S.line[i] = a;
+  if (S.stepCur) S.stepCur.swap = [S.swapFrom, i];
   S.swapFrom = -1;
   afterRepair();
 }
@@ -540,18 +584,22 @@ function lineText(){
 }
 function shareText(){
   return '한 줄 ' + (S.daily ? '#' + E.dayNumber() : '자유 ' + S.seed.toString(36)) + '\n' +
-         (S.floor-1) + '층 · ' + fmt(S.total) + '점\n' +
+         (S.floor-1) + '층 통과 · 총점 ' + fmtT(S.total) + '\n' +
          lineText();
 }
 function drawOver(p){
   var reached = S.floor - 1;
-  var first = null;
-  if (S.daily){
-    first = readRec();
-    writeRec({ floor:reached, total:S.total, line:lineText() });
+  /* 결과 화면이 다시 그려져도 "오늘 첫 판인가"가 바뀌면 안 된다.
+     예전엔 두 번째로 그릴 때 방금 쓴 기록을 읽고 "이번 판은 연습"이라 했다 */
+  if (S.daily && S.firstRec === undefined){
+    S.firstRec = readRec();
+    writeRec({ floor:reached, total:E.vPack(S.total), line:lineText() });
   }
+  var first = S.daily ? S.firstRec : null;
+  /* 머리의 층 표시는 "지금 도전 중인 층"이라 못 넘은 층(예: 28)이 떠 있다.
+     예전엔 여기서 "27층에서 멈췄습니다"라고 해서 숫자가 서로 안 맞아 보였다 */
   var m = el('div','msg');
-  m.innerHTML = '<em>' + reached + '층에서 멈췄습니다.</em> 총점 ' + fmt(S.total) + '점';
+  m.innerHTML = '<em>' + S.floor + '층에서 멈췄습니다</em> — ' + reached + '층까지 통과, 총점 ' + fmt(S.total);
   p.appendChild(m);
 
   var pre = el('pre','share', shareText());
@@ -574,11 +622,14 @@ function drawOver(p){
   var h = el('div','hint');
   h.innerHTML = S.daily
     ? (first
-        ? '오늘 기록은 이미 <b style="color:var(--fg)">' + first.floor + '층 · ' +
-          fmt(first.total) + '점</b>으로 남아 있습니다. 이번 판은 연습입니다.'
+        ? '오늘 기록은 이미 <b style="color:var(--fg)">' + first.floor + '층 통과 · ' +
+          fmt(first.total) + '</b>으로 남아 있습니다. 이번 판은 연습입니다.'
         : '오늘의 시드는 모두 같습니다. 같은 카드가 같은 순서로 나왔으니, 차이는 어디에 뒀느냐뿐입니다.')
     : '자유 모드는 매번 다른 시드로 돕니다. 기록 비교는 데일리로 하세요.';
   p.appendChild(h);
+
+  var sec = rankSection(first);
+  if (sec) p.appendChild(sec);
 }
 
 
@@ -676,12 +727,12 @@ function tutFinish(res){
   var slots = document.querySelectorAll('#line .slot');
   for (var j=0;j<slots.length;j++) slots[j].classList.remove('lit');
   var d = S.tut.def;
-  var ok = d.always || res.score >= d.goal;
+  var ok = d.always || ge(res.v, d.goal);
   S.phase = ok ? 'pass' : 'fail';
-  drawFlow(fmt(res.score), d.always ? '' : (ok ? 'win' : 'lose'),
+  drawFlow(fmt(res.v), d.always ? '' : (ok ? 'win' : 'lose'),
     d.always ? '무효인 칸은 아무 일도 하지 않습니다'
              : (ok ? '목표 ' + fmt(d.goal) + ' 통과'
-                   : '목표 ' + fmt(d.goal) + ' — ' + shortText(res.score, d.goal)));
+                   : '목표 ' + fmt(d.goal) + ' — ' + shortText(res.v, d.goal)));
   drawPanel();
 }
 
@@ -772,6 +823,144 @@ function openDex(){
   d.classList.add('on');
 }
 
+// ══════════════════════════════════ 순위
+/* 순위 서버는 Cloudflare Worker(oneline-rank, 저장소 rank/ 폴더). 허브 채팅과 따로 논다.
+   서버는 점수를 믿지 않고 S.moves 를 엔진으로 다시 돌려 직접 계산한다.
+   다른 서버에 붙여 시험하려면 주소 뒤에 ?api=http://localhost:8799 */
+var RANK_API = (function(){
+  try { var q = new URLSearchParams(location.search).get('api'); if (q) return q.replace(/\/$/, ''); } catch(e){}
+  return 'https://oneline-rank.41ways.workers.dev';
+})();
+function lsGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function lsSet(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
+/* 이름이 아니라 "이 브라우저"를 가리키는 무작위 아이디. 하루 한 줄을 지키는 데만 쓴다 */
+function myPid(){
+  var p = lsGet('oneline-pid');
+  if (!p || !/^[a-z0-9]{8,32}$/.test(p)){
+    p = '';
+    for (var i=0;i<16;i++) p += 'abcdefghijklmnopqrstuvwxyz0123456789'.charAt(Math.floor(Math.random()*36));
+    lsSet('oneline-pid', p);
+  }
+  return p;
+}
+var NICK_A = ['느긋한','배고픈','수상한','용감한','졸린','반짝이는','말없는','날쌘','엉뚱한','다정한','씩씩한','꼼꼼한'];
+var NICK_B = ['수달','펭귄','너구리','고양이','두더지','참새','고래','판다','오리','여우','다람쥐','문어'];
+function randomNick(){
+  return NICK_A[Math.floor(Math.random()*NICK_A.length)] + ' ' + NICK_B[Math.floor(Math.random()*NICK_B.length)];
+}
+function rankFetch(path, opt){
+  return fetch(RANK_API + path, opt).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(j){
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      return j;
+    });
+  });
+}
+function rankRow(r){
+  var tr = el('tr', r.me ? 'me' : '');
+  tr.appendChild(el('td', 'r', r.rank));
+  tr.appendChild(el('td', 'nm', r.name + (r.me ? ' (나)' : '')));      // 남이 쓴 글자라 textContent 로만
+  tr.appendChild(el('td', 'f', r.floor + '층'));
+  var t = el('td', 't');
+  t.innerHTML = fmt(E.vUnpack(r.total));
+  tr.appendChild(t);
+  tr.title = (r.line || []).map(function(id){ return id && E.CARDS[id] ? E.CARDS[id].g : '·'; }).join(' ');
+  return tr;
+}
+function rankTable(b){
+  var wrap = el('div','rank');
+  if (!b.rows.length){
+    wrap.appendChild(el('div','hint','아직 아무도 안 올렸습니다. 첫 번째가 되세요.'));
+    return wrap;
+  }
+  var t = el('table');
+  b.rows.forEach(function(r){ t.appendChild(rankRow(r)); });
+  if (b.mine && !b.rows.some(function(r){ return r.me; })){
+    var gap = el('tr','gap'); gap.appendChild(el('td', null, '⋯')).colSpan = 4;
+    t.appendChild(gap);
+    t.appendChild(rankRow(b.mine));
+  }
+  wrap.appendChild(t);
+  wrap.appendChild(el('div','hint', '오늘 ' + b.count + '명 · 한 사람당 그날 첫 판만 · 줄에 마우스를 올리면 마지막 배치가 보입니다'));
+  return wrap;
+}
+/* 판이 끝난 화면 아래 붙는 순위 칸.
+   오늘 첫 판이면 이름을 받아 올린다. 자동으로 올리지 않는 건 — 이름이
+   남들 화면에 뜨는 일이라 한 번은 스스로 누르게 하려고 */
+function rankSection(first){
+  var sec = el('div','ranksec');
+  if (!S.daily) return null;
+  if (first || S.submitted){ loadBoard(sec, first ? '순위에는 오늘 첫 판만 올라갑니다.' : null); return sec; }
+
+  var m = el('div','msg');
+  m.innerHTML = '오늘 첫 판입니다. <em>순위에 올릴까요?</em>';
+  sec.appendChild(m);
+  var row = el('div','namerow');
+  var inp = document.createElement('input');
+  inp.type = 'text'; inp.maxLength = 12; inp.placeholder = '이름 (비우면 아무 별명)';
+  inp.value = lsGet('oneline-name') || '';
+  var go = el('button','act','이 이름으로 올리기');
+  go.onclick = function(){
+    var nm = inp.value.trim() || randomNick();
+    lsSet('oneline-name', nm);
+    submitRun(nm, sec);
+  };
+  inp.onkeydown = function(e){ if (e.key === 'Enter') go.onclick(); };
+  row.appendChild(inp); row.appendChild(go);
+  sec.appendChild(row);
+  sec.appendChild(el('div','hint','점수는 서버가 둔 수를 처음부터 다시 돌려 직접 계산합니다.'));
+  return sec;
+}
+function submitRun(name, sec){
+  if (S.submitted) return;
+  S.submitted = true;
+  sec.innerHTML = '';
+  sec.appendChild(el('div','hint','순위에 올리는 중…'));
+  rankFetch('/api/submit', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ day: E.dayNumber(), pid: myPid(), name: name, moves: S.moves })
+  }).then(function(b){
+    sec.innerHTML = '';
+    var head = el('div','msg');
+    head.innerHTML = b.recorded
+      ? '<em>' + b.mine.rank + '위</em> — 오늘 ' + b.count + '명 중'
+      : '오늘은 이미 올린 판이 있습니다. 그 기록이 <em>' + b.mine.rank + '위</em>입니다.';
+    sec.appendChild(head);
+    sec.appendChild(rankTable(b));
+  }).catch(function(e){
+    S.submitted = false;
+    sec.innerHTML = '';
+    sec.appendChild(el('div','hint','순위 서버에 못 올렸습니다 — ' + e.message));
+    var r = el('div','row'); r.style.marginTop = '10px';
+    var again = el('button','act ghost','다시 올리기');
+    again.onclick = function(){ submitRun(name, sec); };
+    r.appendChild(again); sec.appendChild(r);
+  });
+}
+function loadBoard(box, note){
+  box.appendChild(el('div','hint','순위 불러오는 중…'));
+  rankFetch('/api/top?day=' + E.dayNumber() + '&me=' + myPid()).then(function(b){
+    box.innerHTML = '';
+    if (note) box.appendChild(el('div','msg', note));
+    box.appendChild(rankTable(b));
+  }).catch(function(e){
+    box.innerHTML = '';
+    box.appendChild(el('div','hint','순위를 못 불러왔습니다 — ' + e.message));
+  });
+}
+function openRank(){
+  var d = document.getElementById('dex'), w = d.querySelector('.wrap');
+  w.innerHTML = '';
+  var cl = el('button','act ghost close','닫기');
+  cl.onclick = function(){ d.classList.remove('on'); };
+  w.appendChild(cl);
+  w.appendChild(el('h2', null, '오늘의 순위'));
+  w.appendChild(el('div','sub', '데일리 #' + E.dayNumber() + ' — 같은 날은 모두 같은 카드가 같은 순서로 나옵니다. 차이는 어디에 뒀느냐뿐입니다.'));
+  var box = el('div'); w.appendChild(box);
+  loadBoard(box, null);
+  d.classList.add('on');
+}
+
 // ══════════════════════════════════ 시작 화면
 function title(){
   S = { tut:null, daily:false, floor:1, total:0, line:[], phase:'title' };
@@ -803,14 +992,16 @@ function title(){
   b.onclick = function(){ newGame(false); };
   var dx = el('button','act ghost','카드 목록');
   dx.onclick = openDex;
-  r.appendChild(tu); r.appendChild(a); r.appendChild(b); r.appendChild(dx);
+  var rk = el('button','act ghost','오늘의 순위');
+  rk.onclick = openRank;
+  r.appendChild(tu); r.appendChild(a); r.appendChild(b); r.appendChild(rk); r.appendChild(dx);
   [].forEach.call(r.children, function(btn, i){ btn.style.setProperty('--di', (.36 + i * .07) + 's'); });
   p.appendChild(r);
   var h = el('div','hint');
   var rec = readRec();
   h.innerHTML = (rec
-      ? '오늘 기록 — <b style="color:var(--fg)">' + rec.floor + '층 · ' +
-        fmt(rec.total) + '점</b> &nbsp; <span style="font-family:var(--mono)">' +
+      ? '오늘 기록 — <b style="color:var(--fg)">' + rec.floor + '층 통과 · ' +
+        fmt(rec.total) + '</b> &nbsp; <span style="font-family:var(--mono)">' +
         rec.line + '</span><br>'
       : '') +
     '오늘의 판은 접속한 모두가 같은 시드로 돕니다 — 나오는 카드도 순서도 같습니다.<br>' +

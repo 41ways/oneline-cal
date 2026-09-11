@@ -6,22 +6,22 @@
    실행: node sim/early.js
    ══════════════════════════════════════════════════════════════════ */
 var E = require('../engine.js');
-function execRnd(s,f){ return E.mulberry32((s^(f*7919))>>>0); }
+var execRnd = E.execRnd;
 var curF = 1;
 function bestSlot(line,id,r){ var b=0,bv=-Infinity;
   for(var i=0;i<line.length;i++){ var k=line[i]; line[i]={id:id};
-    var v=E.expected(line,r,5,curF); line[i]=k; if(v>bv){bv=v;b=i;} } return b; }
+    var v=E.expectedV(line,r,5,curF).L; line[i]=k; if(v>bv){bv=v;b=i;} } return b; }
 function earlyFail(seed){
   var offer=E.mulberry32(seed), ev=E.mulberry32((seed*31+17)>>>0);
   var line=new Array(E.SLOTS_START).fill(null);
   E.START_HAND.forEach(function(id){ line[bestSlot(line,id,ev)]={id:id}; });
   for (var f=1; f<=3; f++){
     curF = f;
-    if (E.run(line, execRnd(seed,f), f).score < E.targetFor(f)) return f;
+    if (!E.passes(E.run(line, execRnd(seed,f), f).v, f)) return f;
     if (E.SLOT_GAIN_ON.indexOf(f)>=0 && line.length<E.SLOTS_MAX) line.push(null);
     var cs=E.rollChoices(f+1,offer,E.CHOICES), w=null, wv=-Infinity;
     for (var j=0;j<cs.length;j++){ var i2=bestSlot(line,cs[j],ev), k=line[i2];
-      line[i2]={id:cs[j]}; var v=E.expected(line,ev,5,curF); line[i2]=k;
+      line[i2]={id:cs[j]}; var v=E.expectedV(line,ev,5,curF).L; line[i2]=k;
       if(v>wv){wv=v;w=cs[j];} }
     line[bestSlot(line,w,ev)]={id:w};
   }

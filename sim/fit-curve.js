@@ -19,13 +19,13 @@ var DEEP = 14;                                       // 여기까지 곡선을 �
 var ITER = 6;
 var EARLY = [20, 40, 130];   // sim/early.js가 잡아둔 값. 데일리 공정성이 걸려 고정
 
-function execRnd(seed, floor){ return E.mulberry32((seed ^ (floor*7919)) >>> 0); }
+var execRnd = E.execRnd;
 var curFloor = 1;
 function bestSlot(line, id, evalR){
   var b = 0, bv = -Infinity;
   for (var i=0;i<line.length;i++){
     var k = line[i]; line[i] = { id:id };
-    var v = E.expected(line, evalR, 5, curFloor);
+    var v = E.expectedV(line, evalR, 5, curFloor).L;
     line[i] = k;
     if (v > bv){ bv = v; b = i; }
   }
@@ -38,15 +38,15 @@ function play(seed){
   var f = 1, scores = [];
   while (f <= DEEP){
     curFloor = f;
-    var sc = E.run(line, execRnd(seed, f), f).score;
+    var rv = E.run(line, execRnd(seed, f), f).v, sc = rv.L;   // 자릿수
     scores.push(sc);
-    if (sc < E.targetFor(f)) break;
+    if (!E.passes(rv, f)) break;
     if (E.SLOT_GAIN_ON.indexOf(f) >= 0 && line.length < E.SLOTS_MAX) line.push(null);
     var cs = E.rollChoices(f+1, offer, E.CHOICES), w = null, wv = -Infinity;
     for (var j=0;j<cs.length;j++){
       var i2 = bestSlot(line, cs[j], ev), k = line[i2];
       line[i2] = { id:cs[j] };
-      var v = E.expected(line, ev, 5, curFloor);
+      var v = E.expectedV(line, ev, 5, curFloor).L;
       line[i2] = k;
       if (v > wv){ wv = v; w = cs[j]; }
     }
@@ -82,7 +82,7 @@ for (var it=0; it<ITER; it++){
     var b = buckets[f];
     if (b.length < 20){ next.push(targets[f] || round3((next[f-1]||1) * 8)); continue; }
     b.sort(function(a,c){ return a-c; });
-    next.push(round3(b[Math.floor(b.length * Q)]));
+    next.push(round3(Math.pow(10, b[Math.floor(b.length * Q)])));
   }
   for (var e2=0; e2<EARLY.length; e2++) next[e2] = EARLY[e2];
   // 단조증가 보정 — 표본이 얇은 층에서 곡선이 주저앉는 걸 막는다
@@ -98,7 +98,7 @@ for (var r2=0; r2<RUNS; r2++){
   var reached = 0;
   for (var i2=0;i2<sc2.length;i2++){
     reach[i2+1]++;
-    if (sc2[i2] >= E.targetFor(i2+1)){ ok[i2+1]++; reached = i2+1; }
+    if (sc2[i2] >= E.targetV(i2+1).L){ ok[i2+1]++; reached = i2+1; }
   }
   sum += reached;
   if (reached >= 8) clear++;

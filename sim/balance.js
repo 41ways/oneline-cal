@@ -22,7 +22,7 @@ if (process.env.TARGETS) E.setTargets(JSON.parse(process.env.TARGETS),
      evalR  배치를 고를 때 머릿속으로 굴려보는 용도
    index.html도 똑같이 나눠 쓴다. 안 그러면 같은 시드인데 사람마다
    미리보기를 몇 번 했느냐로 결과가 갈려서 데일리 비교가 깨진다 */
-function execRnd(seed, floor){ return E.mulberry32((seed ^ (floor * 7919)) >>> 0); }
+var execRnd = E.execRnd;
 
 // ══════════════════════════════════ 원형
 /* pick에 적힌 카드만 집는다. 값이 클수록 먼저. 없는 카드는 최후순위.
@@ -47,7 +47,7 @@ function bestSlot(line, id, evalR){
   for (var i=0;i<line.length;i++){
     var keep = line[i];
     line[i] = { id:id };
-    var v = E.expected(line, evalR, 5, floorHint);
+    var v = E.expectedV(line, evalR, 5, floorHint).L;   // 자릿수로 비교
     line[i] = keep;
     if (v > bestV){ bestV = v; best = i; }
   }
@@ -80,12 +80,12 @@ function place(line, id, arch, evalR){
 /* 정비 — 두 칸을 맞바꾼다. 전부 시험해보고 좋아질 때만 */
 function repair(line, arch, evalR){
   if (arch.blind) return;
-  var base = E.expected(line, evalR, 5), bi=-1, bj=-1;
+  var base = E.expectedV(line, evalR, 5, floorHint).L, bi=-1, bj=-1;
   for (var i=0;i<line.length;i++) for (var j=i+1;j<line.length;j++){
     var a=line[i], b=line[j];
     if (!a && !b) continue;
     line[i]=b; line[j]=a;
-    var v = E.expected(line, evalR, 5, floorHint);
+    var v = E.expectedV(line, evalR, 5, floorHint).L;
     line[i]=a; line[j]=b;
     if (v > base){ base = v; bi=i; bj=j; }
   }
@@ -101,14 +101,14 @@ function playRun(seed, arch){
 
   for (var h=0; h<E.START_HAND.length; h++) place(line, E.START_HAND[h], arch, evalR);
 
-  var floor = 1, total = 0, hist = [];
+  var floor = 1, total = E.V(0), hist = [];
   while (floor <= MAX_FLOOR){
     floorHint = floor;
     var res = E.run(line, execRnd(seed, floor), floor);
-    var target = E.targetFor(floor);
-    hist.push({ floor:floor, score:res.score, target:target, ok:res.score >= target });
-    if (res.score < target) break;
-    total += res.score;
+    var ok = E.passes(res.v, floor);
+    hist.push({ floor:floor, score:res.v, target:E.targetV(floor), ok:ok });
+    if (!ok) break;
+    E.vAdd(total, res.v);
 
     if (E.SLOT_GAIN_ON.indexOf(floor) >= 0 && line.length < E.SLOTS_MAX) line.push(null);
     if (E.REPAIR_ON.indexOf(floor) >= 0) repair(line, arch, evalR);
@@ -140,7 +140,7 @@ Object.keys(ARCH).forEach(function(name){
     var run = playRun((r*2654435761 + 12345) >>> 0, arch);
     sum += run.reached; if (run.reached > max) max = run.reached;
     if (run.reached >= 8) clear8++;
-    totals.push(run.total);
+    totals.push(run.total.L);
     run.hist.forEach(function(h){ reach[h.floor]++; if (h.ok) pass[h.floor]++; });
   }
   totals.sort(function(a,b){ return a-b; });
@@ -153,7 +153,7 @@ Object.keys(ARCH).forEach(function(name){
 console.log('\n총점 (모든 층 점수의 합)');
 console.log(padR('원형',8) + pad('중앙값',14) + pad('상위 10%',16));
 lines.forEach(function(l){
-  var f = function(x){ return x >= 1e12 ? x.toExponential(2) : Math.round(x).toLocaleString('en-US'); };
+  var f = function(L){ return L === -Infinity ? '0' : (L < 12 ? Math.round(Math.pow(10,L)).toLocaleString('en-US') : '10^' + L.toFixed(1)); };
   console.log(padR(l.name,8) + pad(f(l.med),14) + pad(f(l.p90),16));
 });
 
@@ -162,7 +162,7 @@ var demo = playRun(777, ARCH['탐욕']);
 console.log('\n표본 한 판 (탐욕, 시드 777) — ' + demo.reached + '층 도달');
 console.log('  줄  ' + demo.line.map(function(c){ return c ? E.CARDS[c.id].g : '·'; }).join(' | '));
 demo.hist.forEach(function(h){
-  var g = function(x){ return x >= 1e12 ? x.toExponential(2) : Math.round(x).toLocaleString('en-US'); };
+  var g = function(v){ return (v.L < 12 && v.L > -Infinity) ? Math.round(Math.pow(10,v.L)).toLocaleString('en-US') : (v.L === -Infinity ? '0' : '10^' + v.L.toFixed(1)); };
   console.log('  ' + pad(h.floor,2) + '층  ' + pad(g(h.score),14) +
               ' / ' + padR(g(h.target),14) + (h.ok ? '통과' : '실패'));
 });

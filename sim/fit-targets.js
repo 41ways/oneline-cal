@@ -15,13 +15,13 @@
    ══════════════════════════════════════════════════════════════════ */
 var E = require('../engine.js');
 
-function execRnd(seed, floor){ return E.mulberry32((seed ^ (floor*7919)) >>> 0); }
+var execRnd = E.execRnd;
 var curFloor = 1;
 function bestSlot(line, id, evalR){
   var best=0, bestV=-Infinity;
   for (var i=0;i<line.length;i++){
     var keep=line[i]; line[i]={id:id};
-    var v=E.expected(line, evalR, 5, curFloor);
+    var v=E.expectedV(line, evalR, 5, curFloor).L;
     line[i]=keep;
     if (v>bestV){ bestV=v; best=i; }
   }
@@ -36,13 +36,13 @@ function play(seed, targets, endless, loops, powcap){
   while (floor<=30){
     curFloor = floor;
     var res=E.run(line, execRnd(seed,floor), floor);
-    if (res.score>=E.VALUE_CAP && floor<=8) capped=true;   // 본편 안에서만
-    if (res.score < E.targetFor(floor)) break;
+    if (res.v.L >= 300 && floor<=8) capped=true;   // 본편 안에서 자릿수 300 을 넘으면 폭발로 본다
+    if (!E.passes(res.v, floor)) break;
     if (E.SLOT_GAIN_ON.indexOf(floor)>=0 && line.length<E.SLOTS_MAX) line.push(null);
     var cs=E.rollChoices(floor+1, offer, E.CHOICES), win=null, winV=-Infinity;
     for (var j=0;j<cs.length;j++){
       var i2=bestSlot(line,cs[j],evalR), keep=line[i2];
-      line[i2]={id:cs[j]}; var v=E.expected(line,evalR,5,curFloor); line[i2]=keep;
+      line[i2]={id:cs[j]}; var v=E.expectedV(line,evalR,5,curFloor).L; line[i2]=keep;
       if (v>winV){ winV=v; win=cs[j]; }
     }
     line[bestSlot(line,win,evalR)]={id:win};

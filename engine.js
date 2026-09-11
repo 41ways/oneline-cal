@@ -19,34 +19,13 @@ var SLOTS_MAX   = 10;     // 칸 수 상한 (이 이상은 보상으로도 안 �
 var LOOP_BUDGET = 1;
 var START_VALUE = 1;      // 줄에 들어가는 최초의 값
 var STEP_CAP    = 300;    // 무한루프 방지용 실행 상한 (정상 플레이론 절대 안 닿음)
-/* 값 천장. 예전엔 1e15(정수로 정확한 한계)였는데, 그러면 제곱에 배수 상한을
-   걸어야만 게임이 성립했다. 상한이 걸린 제곱은 더 이상 제곱이 아니라
-   화면의 숫자가 카드 설명과 어긋나 보인다 — 그게 제일 나쁘다.
-   정수 정확성을 포기하고 부동소수 범위를 그대로 쓴다. 1e15를 넘어가면
-   끝자리가 정확하지 않지만, 그 크기에서 끝자리를 보는 사람은 없다 */
-var VALUE_CAP   = 1e300;
 var REPAIR_ON   = [3,6,9,12];  // 정비 단계가 붙는 층 (두 칸 맞바꾸기 1회)
 /* 칸은 보상으로 고르는 게 아니라 정해진 층에서 그냥 늘어난다.
    "카드 받을래 칸 받을래"를 물으면 답이 뻔해서(칸은 당장 점수가 0) 선택이 안 됨.
    이 게임에서 고민할 값어치가 있는 건 배치 하나뿐이라, 나머지는 고정으로 뺐다 */
 var SLOT_GAIN_ON = [2,4,6,8,10];
 
-/* 층 목표 — 지수 곡선. 4층부터 덧셈만으론 못 넘게 잡았다.
-   "곱셈 축을 언제 열 것인가"를 강제하는 게 이 숫자들의 유일한 목적임 */
-/* 앞뒤가 서로 다른 목적으로 맞춰져 있다.
-   앞 세 층(20/40/150)은 sim/early.js 기준 — 완벽하게 둬도 못 넘는 날을
-   최소로. 데일리는 모두가 같은 시드라, 초반 실패율이 그대로
-   "오늘은 전원 전멸하는 날"의 비율이 되기 때문.
-   4층부터(4000~)는 sim/fit-targets.js 기준.
-   3층에서 4층으로 목표가 27배 뛰는 건 의도한 것으로, 여기가
-   "덧셈만으로는 더 못 간다"를 몸으로 알게 되는 자리다.
-
-   후보를 5장으로 늘리고 지수를 두 번 쓰게 열면서 곡선을 통째로 다시 올렸다.
-   매 층 다섯 장 중 최선을 고르면 줄의 성장률이 예전의 배가 되는데,
-   칸 수를 조여봐도(10칸→7칸) 8층 클리어가 41%→48%로 오히려 흔들릴 뿐
-   내려가지 않았다 — 칸 증가가 2·4·6·8층이라 본편 안에서는
-   어느 설정이든 줄 길이가 같기 때문. 성장은 칸이 아니라 뽑기 폭에서 나온다 */
-/* 앞 세 층(20/40/130)은 sim/early.js 기준 — 완벽하게 둬도 못 넘는 날을 최소로.
+/* 층 목표. 앞 세 층(20/40/130)은 sim/early.js 기준 — 완벽하게 둬도 못 넘는 날을 최소로.
    데일리는 모두가 같은 시드로 도니까 초반 실패율이 그대로
    "오늘은 전원 전멸하는 날"의 비율이 된다.
 
@@ -56,52 +35,124 @@ var SLOT_GAIN_ON = [2,4,6,8,10];
    "같은 카드는 앞의 것만" 규칙을 넣고서야 8층 분포 폭이
    88자릿수에서 14자릿수로 내려와 선 하나로 자를 만해졌다 */
 var TARGETS = [20, 40, 130, 1300, 4500, 22000, 140000, 800000];
-/* 무한 모드는 배수가 아니라 거듭제곱으로 올린다.
+/* 무한 모드는 배수가 아니라 거듭제곱으로 올린다 — 자릿수가 층마다 22%씩 는다.
    잘 자란 줄은 층당 자릿수가 3씩 늘어서(실측 75% 지점) 어떤 고정 배수로도
-   못 따라잡는다. t → t^1.22 면 처음엔 10배 남짓으로 시작해 점점 가팔라져,
-   본편을 넘긴 판도 열 층 안팎에서 자기 상한에 부딪힌다 */
+   못 따라잡는다. 줄이 내는 점수는 한 번 짜이면 층마다 거의 같으니,
+   어느 줄이든 결국 자릿수가 22%씩 크는 목표에 따라잡혀 끝난다 */
 var ENDLESS_POW = 1.22;
 
 var RARITY = { common:'보통', uncommon:'희귀', rare:'상급', legend:'전설' };
 
-function targetFor(floor){            // floor는 1부터
-  if (floor <= TARGETS.length) return TARGETS[floor-1];
-  var t = TARGETS[TARGETS.length-1];
-  /* 목표는 값 천장에 가두지 않는다. 가둬버리면 28층쯤에서 목표와 점수가
-     둘 다 1e300이 되어 조건이 늘 참이 되고, 무한 모드가 진짜로 안 끝난다 */
-  for (var i=TARGETS.length; i<floor; i++) t = Math.pow(t, ENDLESS_POW);
-  return t;
+// ══════════════════════════════════ 수 — 자릿수로 들고 다니기
+/* 값은 { n, L } 한 쌍이다.
+     n 이 유한하면   정확한 정수 n (0 ≤ n < 1e15), L = log10(n)
+     n 이 Infinity면  n 은 버리고 L 이 곧 값 (값 = 10^L, L ≥ 15)
+
+   예전엔 그냥 자바스크립트 수에 1e300 천장을 씌웠다. 제보가 들어왔다 —
+   "얻은 숫자랑 표기되는 숫자가 다르다". 복제가 3.66e152 를 제곱해 1.3e305 를
+   만들면 천장이 그걸 1e300 으로 잘랐고, 뒤에 붙은 층×25(×700)는 분명히 일을
+   했는데 천장에 다시 잘려 「그대로」로 찍혔다. 28층 목표는 수의 한계를 넘어
+   ∞ 가 됐고 "∞배 모자랍니다"가 떴다. 자바스크립트 수는 1.8e308 에서 끝나서
+   천장을 거기까지 올려도 한 층도 안 늘어난다.
+
+   자릿수(L)를 부동소수로 들면 한계가 10^(1.8e308) 이 된다. 곱하기는 L 에
+   더하기, 제곱은 L 두 배라 계산도 가볍다.
+   1e15 밑은 정수 그대로 둔다 — 짝·홀, <100, ≥1000, 올림처럼 끝자리가
+   중요한 판정은 전부 작은 값에서만 뜻이 있고, 그 구간을 정확하게 두면
+   예전 규칙과 한 끝도 안 달라진다 */
+var EXACT     = 1e15;
+var LOG_EXACT = 15;
+var L_CAP     = 1e308;      // 자릿수 자체의 상한. 이 게임에서 닿을 일은 없다
+
+function V(n){ return vSet({ n:0, L:-Infinity }, n === undefined ? 0 : n); }
+function vSet(x, n){
+  if (!(n > 0)){ x.n = 0; x.L = -Infinity; return x; }       // 0, 음수, NaN
+  if (n < EXACT){
+    x.n = Math.floor(n);
+    x.L = x.n > 0 ? Math.log10(x.n) : -Infinity;
+    return x;
+  }
+  x.n = Infinity; x.L = Math.min(Math.log10(n), L_CAP);
+  return x;
 }
+function vSetL(x, L){
+  if (!(L > -Infinity)){ x.n = 0; x.L = -Infinity; return x; }
+  /* 큰 쪽에서 작은 쪽으로 내려올 때(나누기) 10^log10(1000) 이 999.9999… 로
+     나와 버림하면 999 가 된다. 이 경로의 값은 원래 끝자리가 없으니 반올림 */
+  if (L < LOG_EXACT) return vSet(x, Math.round(Math.pow(10, L)));
+  x.n = Infinity; x.L = Math.min(L, L_CAP);
+  return x;
+}
+function vBig(x){ return x.n === Infinity; }
+function vCopy(x){ return { n:x.n, L:x.L }; }
+function vEq(a, b){ return a.n === b.n && (a.n !== Infinity || a.L === b.L); }
+function vCmp(a, b){
+  if (!vBig(a) && !vBig(b)) return a.n < b.n ? -1 : (a.n > b.n ? 1 : 0);
+  return a.L < b.L ? -1 : (a.L > b.L ? 1 : 0);
+}
+function vAddN(x, k){
+  if (!vBig(x)) return vSet(x, x.n + k);
+  if (!(k > 0)) return x;
+  return vSetL(x, x.L + Math.log10(1 + Math.pow(10, Math.log10(k) - x.L)));
+}
+function vAddV(x, y){
+  if (!vBig(x) && !vBig(y)) return vSet(x, x.n + y.n);
+  if (y.L === -Infinity) return x;
+  if (x.L === -Infinity){ x.n = y.n; x.L = y.L; return x; }
+  var a = Math.max(x.L, y.L), b = Math.min(x.L, y.L);
+  return vSetL(x, a + Math.log10(1 + Math.pow(10, b - a)));
+}
+function vMulN(x, k){
+  if (!(k > 0)) return vSet(x, 0);
+  if (!vBig(x)) return vSet(x, x.n * k);
+  return vSetL(x, x.L + Math.log10(k));
+}
+function vDivN(x, k){                 // 버림 나눗셈
+  if (!vBig(x)) return vSet(x, x.n / k);
+  return vSetL(x, x.L - Math.log10(k));
+}
+function vSq(x){
+  if (!vBig(x)) return vSet(x, x.n * x.n);
+  return vSetL(x, x.L * 2);
+}
+function vLtN(x, k){ return !vBig(x) && x.n < k; }
+function vGeN(x, k){ return vBig(x) || x.n >= k; }
+/* 1e15 이상은 끝자리가 없으니 짝수로 친다. 예전 부동소수 규칙에서도
+   2^53 을 넘는 수는 전부 짝수였다 */
+function vEven(x){ return vBig(x) || x.n % 2 === 0; }
+
+/* 저장소·네트워크로 보낼 때. JSON 은 Infinity 를 null 로 바꿔 버린다 */
+function vPack(x){ return { n: vBig(x) ? null : x.n, L: x.L === -Infinity ? null : x.L }; }
+function vUnpack(o){
+  if (o == null) return V(0);
+  if (typeof o === 'number') return V(o);                   // 예전 기록(그냥 수)
+  if (o.n != null) return V(o.n);
+  if (o.L != null) return vSetL({ n:0, L:0 }, o.L);
+  return V(0);
+}
+
+function targetV(floor){               // floor는 1부터
+  if (floor <= TARGETS.length) return V(TARGETS[floor-1]);
+  var L = Math.log10(TARGETS[TARGETS.length-1]);
+  for (var i=TARGETS.length; i<floor; i++) L = L * ENDLESS_POW;
+  return vSetL({ n:0, L:0 }, L);
+}
+function passes(v, floor){ return vCmp(v, targetV(floor)) >= 0; }
 
 // ══════════════════════════════════ 값 조작 헬퍼
 /* 역전(invert)이 켜져 있으면 더하기와 곱하기가 서로 뒤바뀐다.
-   그래서 모든 카드는 S.v를 직접 만지지 않고 이 둘을 거친다 —
-   숫자를 직접 건드리는 건 제곱·자릿수처럼 애초에 +/×가 아닌 것들뿐 */
-function ADD(S,n){ S.v = S.inv ? S.v * n : S.v + n; }
-function MUL(S,n){ S.v = S.inv ? S.v + n : S.v * n; }
-
-/* 자릿수 합. 1e15를 넘으면 끝자리가 애초에 정확하지 않아서, 표기의
-   유효숫자만 더한다 (1.234e+42 → 1+2+3+4). 값이 클수록 크게 깎이는
-   성질은 그대로 유지됨 */
-function digitSum(x){
-  x = Math.floor(Math.abs(x));
-  if (!isFinite(x)) return 0;
-  var t = (x < 1e15) ? String(x) : x.toExponential(14).split('e')[0];
-  var s = 0;
-  for (var i=0;i<t.length;i++){ var c = t.charCodeAt(i) - 48; if (c >= 0 && c <= 9) s += c; }
-  return s;
-}
-function clampV(S){
-  if (!isFinite(S.v) || isNaN(S.v)) S.v = VALUE_CAP;
-  S.v = Math.floor(S.v);
-  if (S.v > VALUE_CAP) S.v = VALUE_CAP;
-  if (S.v < 0) S.v = 0;
-}
+   그래서 모든 카드는 값을 직접 만지지 않고 이 둘을 거친다.
+   S.acted 는 "이 카드가 실제로 뭔가 했나" — 조건이 안 맞았거나 되감기
+   예산이 없어 헛돈 칸만 화면에 「그대로」로 찍으려고 둔다. 값이 그대로인지로
+   판정하면, 1e20 에 +30 처럼 일은 했는데 표기 자릿수에 안 잡히는 경우까지
+   「그대로」가 되어 제보와 같은 오해가 다시 생긴다 */
+function ADD(S,k){ S.acted = true; if (S.inv) vMulN(S.v, k); else vAddN(S.v, k); }
+function MUL(S,k){ S.acted = true; if (S.inv) vAddN(S.v, k); else vMulN(S.v, k); }
 
 // ══════════════════════════════════ 카드
 /* n 이름 / g 칸에 찍히는 짧은 글자 / r 등급 / d 설명 / fx 효과
    fx(S)에서 쓸 수 있는 것
-     S.v      지금 흐르는 값
+     S.v      지금 흐르는 값 — { n, L } 쌍. 직접 만지지 말고 ADD·MUL·v* 함수를 거친다
      S.i      이 카드가 놓인 칸 번호 (0부터) — 자리에 반응하는 카드가 씀
      S.line   줄 전체
      S.mem    기억해둔 값
@@ -126,28 +177,25 @@ var CARDS = {
             fx:function(S){ MUL(S,3); } },
   mul5:   { k:'mul', n:'다섯 곱절',g:'×5',    r:'rare',     d:'값을 5배로',
             fx:function(S){ MUL(S,5); } },
-  /* 지수는 한 판에 한 번만 제값을 한다. 되감기 루프 안에 제곱이 들어가면
-     v → v² → v⁴ → v⁸ 이 되어 다섯 층 만에 값 천장에 닿고, 그 뒤론
-     무엇을 집든 무엇을 어디에 두든 결과가 같아진다 (sim/balance.js 첫 회차) */
   square: { n:'제곱',    g:'^2',     r:'uncommon', k:'mul',
             d:'값을 자기 자신과 곱한다. 100이면 10,000. 값이 1이면 그대로라 앞쪽에 두면 손해다',
-            fx:function(S){ S.v = S.v * S.v; } },
+            fx:function(S){ S.acted = true; vSq(S.v); } },
   /* 원래는 「자릿수 Σ」— 값을 자릿수의 합으로 바꾸는 카드였다. 하는 일은 같지만
      (값을 확 줄인다) 무엇에 쓰는 물건인지 이름에도 표기에도 안 적혀 있어서
      처음 보는 사람이 알아볼 수가 없었다. 결과를 100으로 못박아 바꿨다 */
   reset:  { n:'되돌림',  g:'→100',   r:'uncommon',
             d:'값을 100으로 되돌린다. 「모자람」이나 「올림」처럼 값이 작을 때만 터지는 카드를 다시 살릴 때 쓴다',
-            fx:function(S){ S.v = 100; } },
+            fx:function(S){ S.acted = true; vSet(S.v, 100); } },
 
   // ── 조건 — 순서의 단순한 법칙(덧셈 먼저, 곱셈 나중)을 깨뜨리는 것들
   even3:  { k:'mul', n:'짝',      g:'짝×3',   r:'common',   d:'지금 값이 짝수면 3배. 홀짝은 앞칸들이 정한다',
-            fx:function(S){ if (S.v % 2 === 0) MUL(S,3); } },
+            fx:function(S){ if (vEven(S.v)) MUL(S,3); } },
   odd15:  { n:'홀',      g:'홀+15',  r:'common',   d:'지금 값이 홀수면 15를 더한다. 홀짝은 앞칸들이 정한다',
-            fx:function(S){ if (S.v % 2 === 1) ADD(S,15); } },
+            fx:function(S){ if (!vEven(S.v)) ADD(S,15); } },
   under:  { n:'모자람',  g:'<100+60',r:'common',   d:'값이 100보다 작으면 60을 더한다. 앞칸용',
-            fx:function(S){ if (S.v < 100) ADD(S,60); } },
+            fx:function(S){ if (vLtN(S.v, 100)) ADD(S,60); } },
   over:   { k:'mul', n:'넘침',    g:'≥1k×2',  r:'uncommon', d:'값이 1000 이상이면 2배. 뒷칸용',
-            fx:function(S){ if (S.v >= 1000) MUL(S,2); } },
+            fx:function(S){ if (vGeN(S.v, 1000)) MUL(S,2); } },
 
   // ── 자리 — 이 게임의 주제를 카드로 직접 말하는 것들
   pos:    { n:'자리값',  g:'자리×6', r:'common',   d:'놓인 칸 번호 곱하기 6을 더한다. 뒤에 놓을수록 크다',
@@ -161,11 +209,11 @@ var CARDS = {
   coin:   { k:'mul', n:'동전',    g:'50%×6',  r:'uncommon', d:'절반의 확률로 6배, 아니면 아무 일도 없다',
             fx:function(S){ if (S.rnd() < 0.5) MUL(S,6); } },
   jackpot:{ k:'mul', n:'한탕',    g:'25%×20', r:'legend',   d:'4분의 1로 20배, 빗나가면 값이 3분의 1로 줄어든다',
-            fx:function(S){ if (S.rnd() < 0.25) MUL(S,20); else S.v = S.v / 3; } },
+            fx:function(S){ if (S.rnd() < 0.25) MUL(S,20); else { S.acted = true; vDivN(S.v, 3); } } },
 
   // ── 흐름 제어 — 콤보가 터지는 자리
   skip:   { n:'건너뜀',  g:'건너',      r:'uncommon', d:'바로 다음 칸을 통째로 건너뛴다. 잘못 박아놓은 칸을 죽일 때 쓴다',
-            fx:function(S){ S.skip = true; } },
+            fx:function(S){ S.acted = true; S.skip = true; } },
   /* 무효 규칙에서 빠지는 유일한 카드. 제곱까지 같은 카드 취급이 되면서
      한 카드를 두 번 거는 수단이 이것뿐이 되었다. 그 하나까지 막으면
      지수 콤보가 아예 성립하지 않는다 */
@@ -188,15 +236,15 @@ var CARDS = {
               if (mutedAt(S.line, j)) return;      // 무효인 칸은 복제해도 무효
               var keep = S.i;
               S.i = j;                             // 자리에 반응하는 카드는 원래 자기 칸으로
-              CARDS[c.id].fx(S);
+              CARDS[c.id].fx(S);                   // 안쪽 카드가 일을 했으면 S.acted 가 켜진다
               S.i = keep;
             } },
   rew2:   { n:'되감기 2',g:'↩2',     r:'rare',     d:'두 칸 왼쪽으로 돌아가 그 구간을 한 번 더 흐른다. 남은 되감기가 0이면 아무 일도 안 한다',
-            fx:function(S){ if (S.loops > 0){ S.loops--; S.loopUse++; S.jump = Math.max(0, S.i-2); } } },
+            fx:function(S){ if (S.loops > 0){ S.acted = true; S.loops--; S.loopUse++; S.jump = Math.max(0, S.i-2); } } },
   rew4:   { n:'되감기 4',g:'↩4',     r:'legend',   d:'네 칸 왼쪽으로 돌아가 그 구간을 한 번 더 흐른다. 남은 되감기가 0이면 아무 일도 안 한다',
-            fx:function(S){ if (S.loops > 0){ S.loops--; S.loopUse++; S.jump = Math.max(0, S.i-4); } } },
+            fx:function(S){ if (S.loops > 0){ S.acted = true; S.loops--; S.loopUse++; S.jump = Math.max(0, S.i-4); } } },
   mem:    { n:'저장',    g:'저장',   r:'uncommon', d:'지금 값을 저장해둔다. 그 자체로는 값이 안 바뀐다 — 뒤에 「불러오기」를 놔야 쓸모가 생긴다',
-            fx:function(S){ S.mem = S.v; } },
+            fx:function(S){ S.acted = true; S.mem = vCopy(S.v); } },
   // ── 자리를 더 세게 묻는 것들 (2차 추가)
   front:  { n:'선봉',    g:'앞3×4',  r:'uncommon', k:'mul', d:'1·2·3번 칸에 있으면 4배. 그 밖에서는 아무 일도 없다',
             fx:function(S){ if (S.i < 3) MUL(S,4); } },
@@ -210,7 +258,8 @@ var CARDS = {
   veteran:{ n:'고참',    g:'층×25',  r:'uncommon', d:'지금 층 번호 × 25 를 더한다. 1층에서는 25, 8층에서는 200',
             fx:function(S){ ADD(S, S.floor * 25); } },
   ceil:   { n:'올림',    g:'↑100',   r:'common',   d:'값을 그 위의 100 단위로 올린다. 7이면 100, 130이면 200. 값이 작을수록 이득이 크다',
-            fx:function(S){ S.v = Math.ceil(Math.max(S.v,1)/100) * 100; } },
+            fx:function(S){ if (vBig(S.v)) return;                     // 1e15 위에서는 올려도 그대로
+                            S.acted = true; vSet(S.v, Math.ceil(Math.max(S.v.n,1)/100) * 100); } },
   chain:  { n:'연쇄',    g:'곱뒤×3', r:'uncommon', k:'mul', d:'바로 앞에서 실행된 카드가 곱하기 계열(×2, 제곱, 짝×3 …)이었으면 3배',
             fx:function(S){ var p = S.last >= 0 && S.line[S.last];
                             if (p && CARDS[p.id].k === 'mul') MUL(S,3); } },
@@ -221,34 +270,30 @@ var CARDS = {
   add50:  { n:'쉰',      g:'+50',    r:'rare',     d:'값에 50을 더한다. 역전을 만나면 50배가 된다',
             fx:function(S){ ADD(S,50); } },
   bank:   { n:'반만 저장',g:'저장½',  r:'uncommon', d:'지금 값의 절반을 저장해둔다. 값 자체는 안 바뀐다',
-            fx:function(S){ S.mem = Math.floor(S.v/2); } },
+            fx:function(S){ S.acted = true; S.mem = vDivN(vCopy(S.v), 2); } },
   swap:   { n:'맞바꿈',  g:'저장⇄',  r:'rare',     d:'지금 값과 저장해둔 값을 서로 맞바꾼다',
-            fx:function(S){ var t=S.v; S.v=S.mem; S.mem=t; } },
+            fx:function(S){ S.acted = true; var t=S.v; S.v=S.mem; S.mem=t; } },
   /* 이 카드만 재실행 잠금이 따로 있다. 무효 규칙은 "같은 카드 두 장"을 막을 뿐
      "같은 칸 두 번"은 막지 않는데, 되감기 안에 이게 들어가면 매 패스마다
      되감기가 복구되어 영원히 돈다 */
   breath: { n:'숨돌리기',g:'½↩',   r:'rare',     d:'값이 절반으로 줄어드는 대신 되감기를 1 돌려준다. 한 판에 한 번만',
-            fx:function(S){ if (S.breathed) return; S.breathed = true;
-                            S.v = Math.floor(S.v/2); S.loops++; } },
+            fx:function(S){ if (S.breathed) return; S.breathed = true; S.acted = true;
+                            vDivN(S.v, 2); S.loops++; } },
 
-  /* 호출만 ADD를 안 거치고 값을 직접 만진다. 역전 아래에서 곱셈이 되면
-     v × mem 이 되는데 mem이 곧 v라 제곱과 같아지고, 되감기와 겹치면 뚫린다 */
+  /* 불러오기만 ADD를 안 거치고 값을 직접 만진다. 역전 아래에서 곱셈이 되면
+     v × mem 이 되는데 mem이 곧 v라 제곱과 같아진다 */
   recall: { n:'불러오기',g:'불러',   r:'uncommon',
             d:'앞에서 「저장」해둔 값을 지금 값에 더한다. 저장 카드가 앞에 없으면 아무 일도 없다',
-            fx:function(S){ S.v = S.v + S.mem; } },
-  /* 역전도 한 판에 한 번만 켠다. 루프 안에서 켜고 끄기를 반복하면
-     같은 칸이 층마다 다른 뜻이 되어 배치를 계획할 수가 없어짐 */
-  invert: { n:'역전',    g:'역전',      r:'rare',     d:'이 칸 뒤로 모든 더하기와 곱하기가 뒤바뀐다. 한 판에 한 번만 — 두 번째 역전은 아무 일도 안 한다',
-            fx:function(S){ if (S.invUsed) return; S.invUsed = true; S.inv = true; } },
+            fx:function(S){ S.acted = true; vAddV(S.v, S.mem); } },
+  /* 켜기만 한다(토글이 아니라). 되감기로 이 칸을 다시 지나도 상태가 그대로여야
+     같은 칸이 패스마다 다른 뜻이 되는 걸 막을 수 있다 */
+  invert: { n:'역전',    g:'역전',      r:'rare',
+            d:'이 칸보다 뒤에 있는 카드들의 더하기와 곱하기가 서로 뒤바뀐다. +30 은 ×30 이 되고, ×2 는 +2 가 된다',
+            fx:function(S){ S.acted = true; S.inv = true; } },
 };
 
 var CARD_IDS = Object.keys(CARDS);
 
-/* "한 판에 한 번만"이 걸린 카드와, 그 카드들이 공유하는 자물쇠.
-   제곱과 세제곱은 같은 자물쇠를 쓴다 — 둘 다 지수라 함께 잠기지 않으면
-   ^2 ^3 을 나란히 두는 것으로 규칙을 그냥 우회할 수 있다.
-   규칙 자체는 engine이 강제하지만, 이 표는 화면이 "이 칸은 격하됨"을
-   미리 보여주려고 있는 것. 안 보이는 규칙은 플레이어에게 그냥 버그다 */
 /* ══════ 한 줄의 단 하나뿐인 제한 ══════
    같은 카드는 줄에서 **가장 앞선 한 칸만** 효과가 있다. 뒤의 것은 무효.
 
@@ -301,8 +346,8 @@ var START_HAND = ['add3','add7','mul2'];
 function run(line, rnd, floor){
   var S = {
     floor: floor || 1,
-    v: START_VALUE, i: 0, mem: 0, loops: LOOP_BUDGET,
-    inv: false, skip: false, jump: -1, last: -1, breathed: false,
+    v: V(START_VALUE), i: 0, mem: V(0), loops: LOOP_BUDGET,
+    inv: false, skip: false, jump: -1, last: -1, breathed: false, acted: false,
     line: line, rnd: rnd || Math.random, trace: [], loopUse: 0
   };
   /* 같은 카드가 여러 칸에 있으면 가장 앞선 칸만 살린다.
@@ -318,43 +363,66 @@ function run(line, rnd, floor){
     var c = line[S.i];
     if (!c){ S.i++; continue; }                       // 빈 칸은 그냥 지나감
     if (firstAt[c.id] !== undefined && firstAt[c.id] !== S.i){   // 같은 카드가 앞칸에 있다 — 무효
-      S.trace.push({ i:S.i, id:c.id, from:S.v, to:S.v, muted:true });
+      S.trace.push({ i:S.i, id:c.id, from:vCopy(S.v), to:vCopy(S.v), muted:true });
       S.i++; continue;                                // S.last 는 건드리지 않는다
     }
     if (S.skip){                                      // 앞칸의 건너뜀에 걸린 칸
       S.skip = false;
-      S.trace.push({ i:S.i, id:c.id, from:S.v, to:S.v, skipped:true });
+      S.trace.push({ i:S.i, id:c.id, from:vCopy(S.v), to:vCopy(S.v), skipped:true });
       S.i++; continue;
     }
     S.jump = -1;
-    var before = S.v;
+    S.acted = false;
+    var before = vCopy(S.v);
     CARDS[c.id].fx(S);
-    clampV(S);
-    /* 실행은 됐는데 값이 그대로인 칸. 조건이 안 맞았거나(짝×3인데 홀수),
-       쓸 자원이 없거나(되감기 예산 0), 이미 한 번 쓴 카드(숨돌리기)다.
+    /* idle — 실행은 됐는데 카드가 아무것도 안 한 칸. 조건이 안 맞았거나(짝×3인데
+       홀수), 쓸 자원이 없거나(되감기 예산 0), 이미 한 번 쓴 카드(숨돌리기)다.
        무효와는 다르다 — 이건 카드가 돌긴 돌았는데 걸릴 데가 없었던 것 */
-    S.trace.push({ i:S.i, id:c.id, from:before, to:S.v, inv:S.inv,
-                   loopsLeft:S.loops, idle:(before === S.v) });
+    S.trace.push({ i:S.i, id:c.id, from:before, to:vCopy(S.v), inv:S.inv,
+                   loopsLeft:S.loops, idle:!S.acted });
     S.last = S.i;
     if (S.jump >= 0) S.i = S.jump; else S.i++;
   }
-  return { score:S.v, trace:S.trace, loopsUsed: S.loopUse, loopsLeft: S.loops };
+  return { v:S.v, L:S.v.L, score:vNum(S.v), trace:S.trace, loopsUsed: S.loopUse, loopsLeft: S.loops };
 }
 
 /* 운 카드가 섞인 줄은 한 번 돌려선 실력을 알 수 없다.
    배치를 고를 때(사람이든 시뮬레이터든)는 이 기댓값을 본다 */
-function expected(line, rnd, samples, floor){
+function expectedV(line, rnd, samples, floor){
   samples = samples || 7;
   var hasLuck = false;
   for (var k=0;k<line.length;k++){
     var c = line[k];
     if (c && (c.id === 'coin' || c.id === 'jackpot')) hasLuck = true;
   }
-  if (!hasLuck) return run(line, rnd, floor).score;
-  var sum = 0;
-  for (var s=0;s<samples;s++) sum += run(line, rnd, floor).score;
-  return sum / samples;
+  if (!hasLuck) return run(line, rnd, floor).v;
+  /* 평균을 자릿수 공간에서 낸다. 1e300 짜리 표본 몇 개를 그냥 더하면 넘친다 */
+  var Ls = [], small = true, sum = 0;
+  for (var s=0;s<samples;s++){
+    var v = run(line, rnd, floor).v;
+    Ls.push(v.L);
+    if (vBig(v)) small = false; else sum += v.n;
+  }
+  if (small) return V(sum / samples);
+  var m = -Infinity;
+  for (var q=0;q<Ls.length;q++) if (Ls[q] > m) m = Ls[q];
+  var acc = 0;
+  for (var r=0;r<Ls.length;r++) acc += Math.pow(10, Ls[r] - m);
+  return vSetL({ n:0, L:0 }, m + Math.log10(acc / samples));
 }
+
+/* ── 예전 이름들. 새 코드는 쓰지 않는다.
+   GitHub Pages 가 파일을 10분까지 캐시해서, 배포 직후엔 예전 index.html 이
+   새 engine.js 를 부를 수 있다. 그 몇 분 동안 게임이 깨지지 않게 예전처럼
+   그냥 수를 돌려준다(1.8e308 을 넘으면 Infinity) */
+function vNum(x){ return vBig(x) ? Math.pow(10, x.L) : x.n; }
+function expected(line, rnd, samples, floor){ return vNum(expectedV(line, rnd, samples, floor)); }
+function targetFor(floor){ return vNum(targetV(floor)); }
+
+/* 층을 실제로 굴릴 때 쓰는 난수. 층마다 독립 — 미리보기를 몇 번 눌렀는지가
+   결과를 바꾸면 데일리 비교가 깨진다. 게임·시뮬레이터·순위 서버의 재생이
+   전부 이 함수를 쓴다 */
+function execRnd(seed, floor){ return mulberry32((seed ^ (floor * 7919)) >>> 0); }
 
 // ══════════════════════════════════ 뽑기
 /* 층이 깊어질수록 상급·전설이 나오고 보통은 줄어든다.
@@ -412,20 +480,21 @@ function dayNumber(d){
   var utc = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
   return Math.floor(utc / 86400000);
 }
-function dailySeed(d){
-  var n = dayNumber(d);
-  return (n * 2654435761) >>> 0;
-}
+/* 날짜 번호 → 시드. 순위 서버가 제출된 판을 다시 돌릴 때도 이걸 쓴다 */
+function seedForDay(n){ return (n * 2654435761) >>> 0; }
+function dailySeed(d){ return seedForDay(dayNumber(d)); }
 
 // ══════════════════════════════════ 내보내기
 var ENGINE = {
   SLOTS_START:SLOTS_START, SLOTS_MAX:SLOTS_MAX, LOOP_BUDGET:LOOP_BUDGET,
-  START_VALUE:START_VALUE, VALUE_CAP:VALUE_CAP, TARGETS:TARGETS,
+  START_VALUE:START_VALUE, TARGETS:TARGETS, L_CAP:L_CAP,
   ENDLESS_POW:ENDLESS_POW, REPAIR_ON:REPAIR_ON, SLOT_GAIN_ON:SLOT_GAIN_ON,
   RARITY:RARITY, CARDS:CARDS, CARD_IDS:CARD_IDS, START_HAND:START_HAND, CHOICES:CHOICES,
-  targetFor:targetFor, run:run, expected:expected, mutedAt:mutedAt, haveIn:haveIn, loopAudit:loopAudit,
-  rollChoices:rollChoices, weightFor:weightFor, digitSum:digitSum,
-  mulberry32:mulberry32, dailySeed:dailySeed, dayNumber:dayNumber,
+  run:run, expectedV:expectedV, execRnd:execRnd, expected:expected, targetFor:targetFor, mutedAt:mutedAt, haveIn:haveIn, loopAudit:loopAudit,
+  targetV:targetV, passes:passes,
+  V:V, vFromL:function(L){ return vSetL({ n:0, L:0 }, L); }, vAdd:vAddV, vCmp:vCmp, vEq:vEq, vBig:vBig, vCopy:vCopy, vPack:vPack, vUnpack:vUnpack,
+  rollChoices:rollChoices, weightFor:weightFor,
+  mulberry32:mulberry32, dailySeed:dailySeed, dayNumber:dayNumber, seedForDay:seedForDay,
   /* 시뮬레이터가 수치를 바꿔가며 재보려고 열어둔 손잡이.
      게임(index.html)은 절대 안 부른다 — 부르는 순간 데일리가 사람마다 달라짐 */
   setTargets:function(t,e){ TARGETS = t; if (e) ENDLESS_POW = e; },
