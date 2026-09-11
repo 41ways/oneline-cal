@@ -2,6 +2,7 @@
    한 줄 — 데일리 순위 서버
 
    GET  /api/top?day=20707&me=<pid>   그날 순위 (위 20명 + 내 자리)
+   GET  /api/best?me=<pid>             역대 순위 — 한 사람당 가장 좋은 판 하나 (위 20명 + 내 자리)
    POST /api/submit                    { rules, day, pid, name, moves }
 
    점수를 믿지 않는다. 브라우저가 보내는 건 "한 판 동안 둔 수"뿐이고,
@@ -107,29 +108,57 @@ function dayOk(day) {
 
 // ══════════════════════════════════ 순위
 const rowOut = (r, rank, me) => ({
-  rank, name: r.name, floor: r.floor,
+  rank, name: r.name, floor: r.floor, day: r.day,
   total: { n: r.n, L: r.L < 0 ? null : r.L },
   line: r.line ? r.line.split(',') : [],
   me: !!me,
 });
+/* 순위는 늘 지금 규칙 번호(E.RULES)의 판끼리만. 규칙이 바뀌면 점수 뜻이 달라져서
+   옛 판과 새 판을 한 줄에 세우면 순위가 거짓말이 된다 */
 async function rankOf(env, day, L, at) {
   const r = await env.DB.prepare(
-    'SELECT COUNT(*) AS c FROM runs WHERE day = ?1 AND (L > ?2 OR (L = ?2 AND at < ?3))'
-  ).bind(day, L, at).first();
+    'SELECT COUNT(*) AS c FROM runs WHERE day = ?1 AND rules = ?4 AND (L > ?2 OR (L = ?2 AND at < ?3))'
+  ).bind(day, L, at, E.RULES).first();
   return (r ? r.c : 0) + 1;
 }
 async function board(env, day, me) {
   const [list, cnt] = await env.DB.batch([
-    env.DB.prepare('SELECT pid, name, floor, L, n, line, at FROM runs WHERE day = ?1 ORDER BY L DESC, at ASC LIMIT ?2').bind(day, TOP_N),
-    env.DB.prepare('SELECT COUNT(*) AS c FROM runs WHERE day = ?1').bind(day),
+    env.DB.prepare('SELECT pid, name, floor, L, n, line, day, at FROM runs WHERE day = ?1 AND rules = ?3 ORDER BY L DESC, at ASC LIMIT ?2').bind(day, TOP_N, E.RULES),
+    env.DB.prepare('SELECT COUNT(*) AS c FROM runs WHERE day = ?1 AND rules = ?2').bind(day, E.RULES),
   ]);
   const rows = list.results.map((r, i) => rowOut(r, i + 1, me && r.pid === me));
   let mine = rows.find(r => r.me) || null;
   if (!mine && me) {
-    const r = await env.DB.prepare('SELECT pid, name, floor, L, n, line, at FROM runs WHERE day = ?1 AND pid = ?2').bind(day, me).first();
+    const r = await env.DB.prepare('SELECT pid, name, floor, L, n, line, day, at FROM runs WHERE day = ?1 AND pid = ?2 AND rules = ?3').bind(day, me, E.RULES).first();
     if (r) mine = rowOut(r, await rankOf(env, day, r.L, r.at), true);
   }
   return { day, count: cnt.results[0].c, rows, mine };
+}
+/* 역대 — 날짜가 바뀌어도 기록은 지우지 않으니, 표 전체에서 한 사람당 가장 좋은
+   판 하나씩만 뽑아 세운다. 한 사람이 여러 날 잘하면 윗줄을 다 차지하는 걸 막으려고 */
+async function best(env, me) {
+  const [list, cnt] = await env.DB.batch([
+    env.DB.prepare(
+      'WITH b AS (SELECT pid, name, floor, L, n, line, day, at, ' +
+      'ROW_NUMBER() OVER (PARTITION BY pid ORDER BY L DESC, at ASC) AS rn FROM runs WHERE rules = ?1) ' +
+      'SELECT pid, name, floor, L, n, line, day, at FROM b WHERE rn = 1 ORDER BY L DESC, at ASC LIMIT ?2'
+    ).bind(E.RULES, TOP_N),
+    env.DB.prepare('SELECT COUNT(DISTINCT pid) AS c FROM runs WHERE rules = ?1').bind(E.RULES),
+  ]);
+  const rows = list.results.map((r, i) => rowOut(r, i + 1, me && r.pid === me));
+  let mine = rows.find(r => r.me) || null;
+  if (!mine && me) {
+    const r = await env.DB.prepare(
+      'SELECT pid, name, floor, L, n, line, day, at FROM runs WHERE pid = ?1 AND rules = ?2 ORDER BY L DESC, at ASC LIMIT 1'
+    ).bind(me, E.RULES).first();
+    if (r) {
+      const a = await env.DB.prepare(
+        'SELECT COUNT(*) AS c FROM (SELECT pid, MAX(L) AS m FROM runs WHERE rules = ?1 GROUP BY pid) WHERE m > ?2'
+      ).bind(E.RULES, r.L).first();
+      mine = rowOut(r, (a ? a.c : 0) + 1, true);
+    }
+  }
+  return { count: cnt.results[0].c, rows, mine };
 }
 
 // ══════════════════════════════════ 요청
@@ -147,6 +176,11 @@ export default {
         if (!Number.isInteger(day)) return json({ error: 'day' }, 400, h);
         const me = url.searchParams.get('me');
         return json(await board(env, day, pidOk(me) ? me : null), 200, h);
+      }
+
+      if (url.pathname === '/api/best' && req.method === 'GET') {
+        const me = url.searchParams.get('me');
+        return json(await best(env, pidOk(me) ? me : null), 200, h);
       }
 
       if (url.pathname === '/api/submit' && req.method === 'POST') {
@@ -172,8 +206,8 @@ export default {
         const ids = out.line.map(c => (c ? c.id : '')).join(',');
         const at = Date.now();
         const ins = await env.DB.prepare(
-          'INSERT OR IGNORE INTO runs (day, pid, name, floor, L, n, line, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)'
-        ).bind(day, pid, name, out.cleared, L, n, ids, at).run();
+          'INSERT OR IGNORE INTO runs (day, pid, name, floor, L, n, line, at, rules) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)'
+        ).bind(day, pid, name, out.cleared, L, n, ids, at, E.RULES).run();
 
         const b = await board(env, day, pid);
         return json({

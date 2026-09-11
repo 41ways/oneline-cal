@@ -136,6 +136,11 @@ button.ghost:hover{border-color:var(--fg); opacity:1}
 .rank td.t{text-align:right; font-family:var(--mono); white-space:nowrap}
 .rank tr.me td{color:var(--ac)}
 .rank tr.gap td{text-align:center; color:var(--dim); border:0; padding:2px}
+.rank td.d{width:4.6em; color:var(--dim); font-size:11.5px; white-space:nowrap}
+.tabs{display:flex; gap:6px; margin:0 0 18px}
+.tabs button{font:600 12.5px/1 inherit; padding:9px 16px; border-radius:3px; border:1px solid var(--line2);
+  background:none; color:var(--dim); cursor:pointer}
+.tabs button.on{border-color:var(--fg); color:var(--fg)}
 .namerow{display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap; margin:4px 0 12px}
 .namerow input{font:inherit; font-size:14px; padding:11px 12px; border-radius:3px; border:1px solid var(--line2);
   background:#23221d; color:var(--fg); width:190px}
@@ -881,9 +886,15 @@ function rankFetch(path, opt){
     });
   });
 }
-function rankRow(r){
+/* 날짜 번호 → "9월 11일". engine.dayNumber 가 동네 날짜의 UTC 자정을 셌으니 UTC 로 되읽는다 */
+function dayLabel(day){
+  var d = new Date(day * 86400000);
+  return (d.getUTCMonth() + 1) + '월 ' + d.getUTCDate() + '일';
+}
+function rankRow(r, withDay){
   var tr = el('tr', r.me ? 'me' : '');
   tr.appendChild(el('td', 'r', r.rank));
+  if (withDay) tr.appendChild(el('td', 'd', r.day ? dayLabel(r.day) : ''));
   tr.appendChild(el('td', 'nm', r.name + (r.me ? ' (나)' : '')));      // 남이 쓴 글자라 textContent 로만
   tr.appendChild(el('td', 'f', r.floor + '층'));
   var t = el('td', 't');
@@ -892,21 +903,23 @@ function rankRow(r){
   tr.title = (r.line || []).map(function(id){ return id && E.CARDS[id] ? E.CARDS[id].g : '·'; }).join(' ');
   return tr;
 }
-function rankTable(b){
+function rankTable(b, allTime){
   var wrap = el('div','rank');
   if (!b.rows.length){
     wrap.appendChild(el('div','hint','아직 아무도 안 올렸습니다. 첫 번째가 되세요.'));
     return wrap;
   }
   var t = el('table');
-  b.rows.forEach(function(r){ t.appendChild(rankRow(r)); });
+  b.rows.forEach(function(r){ t.appendChild(rankRow(r, allTime)); });
   if (b.mine && !b.rows.some(function(r){ return r.me; })){
-    var gap = el('tr','gap'); gap.appendChild(el('td', null, '⋯')).colSpan = 4;
+    var gap = el('tr','gap'); gap.appendChild(el('td', null, '⋯')).colSpan = allTime ? 5 : 4;
     t.appendChild(gap);
-    t.appendChild(rankRow(b.mine));
+    t.appendChild(rankRow(b.mine, allTime));
   }
   wrap.appendChild(t);
-  wrap.appendChild(el('div','hint', '오늘 ' + b.count + '명 · 한 사람당 그날 첫 판만 · 줄에 마우스를 올리면 마지막 배치가 보입니다'));
+  wrap.appendChild(el('div','hint', allTime
+    ? '지금까지 ' + b.count + '명 · 한 사람당 가장 좋은 판 하나 · 날짜마다 카드가 달라서 운이 조금 섞입니다'
+    : '오늘 ' + b.count + '명 · 한 사람당 그날 첫 판만 · 줄에 마우스를 올리면 마지막 배치가 보입니다'));
   return wrap;
 }
 /* 판이 끝난 화면 아래 붙는 순위 칸.
@@ -962,12 +975,13 @@ function submitRun(name, sec){
     r.appendChild(again); sec.appendChild(r);
   });
 }
-function loadBoard(box, note, day){
+function loadBoard(box, note, day, allTime){
   box.appendChild(el('div','hint','순위 불러오는 중…'));
-  rankFetch('/api/top?day=' + (day || E.dayNumber()) + '&me=' + myPid()).then(function(b){
+  var path = allTime ? '/api/best?me=' + myPid() : '/api/top?day=' + (day || E.dayNumber()) + '&me=' + myPid();
+  rankFetch(path).then(function(b){
     box.innerHTML = '';
     if (note) box.appendChild(el('div','msg', note));
-    box.appendChild(rankTable(b));
+    box.appendChild(rankTable(b, allTime));
   }).catch(function(e){
     box.innerHTML = '';
     box.appendChild(el('div','hint','순위를 못 불러왔습니다 — ' + e.message));
@@ -979,10 +993,29 @@ function openRank(){
   var cl = el('button','act ghost close','닫기');
   cl.onclick = function(){ d.classList.remove('on'); };
   w.appendChild(cl);
-  w.appendChild(el('h2', null, '오늘의 순위'));
-  w.appendChild(el('div','sub', '데일리 #' + E.dayNumber() + ' — 같은 날은 모두 같은 카드가 같은 순서로 나옵니다. 차이는 어디에 뒀느냐뿐입니다.'));
+  w.appendChild(el('h2', null, '순위'));
+  var sub = el('div','sub');
+  w.appendChild(sub);
+  var tabs = el('div','tabs');
+  var tToday = el('button', 'on', '오늘 ' + dayLabel(E.dayNumber()));
+  var tAll = el('button', null, '역대');
+  tabs.appendChild(tToday); tabs.appendChild(tAll);
+  w.appendChild(tabs);
   var box = el('div'); w.appendChild(box);
-  loadBoard(box, null);
+  /* 기록은 날짜가 바뀌어도 지워지지 않는다. 「오늘」은 그날 판끼리, 「역대」는 전부에서
+     한 사람당 가장 좋은 판 하나씩 */
+  function show(allTime){
+    tToday.className = allTime ? '' : 'on';
+    tAll.className = allTime ? 'on' : '';
+    sub.textContent = allTime
+      ? '지금까지 올라온 모든 날의 기록 가운데 한 사람당 가장 좋은 판입니다.'
+      : '데일리 #' + E.dayNumber() + ' — 같은 날은 모두 같은 카드가 같은 순서로 나옵니다. 차이는 어디에 뒀느냐뿐입니다.';
+    box.innerHTML = '';
+    loadBoard(box, null, null, allTime);
+  }
+  tToday.onclick = function(){ show(false); };
+  tAll.onclick = function(){ show(true); };
+  show(false);
   d.classList.add('on');
 }
 
@@ -1017,7 +1050,7 @@ function title(){
   b.onclick = function(){ newGame(false); };
   var dx = el('button','act ghost','카드 목록');
   dx.onclick = openDex;
-  var rk = el('button','act ghost','오늘의 순위');
+  var rk = el('button','act ghost','순위');
   rk.onclick = openRank;
   r.appendChild(tu); r.appendChild(a); r.appendChild(b); r.appendChild(rk); r.appendChild(dx);
   [].forEach.call(r.children, function(btn, i){ btn.style.setProperty('--di', (.36 + i * .07) + 's'); });
