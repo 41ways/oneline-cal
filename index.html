@@ -217,22 +217,25 @@ function curGoal(){
 /* 데일리 기록은 그날의 첫 판만 남긴다. 다시 못 하게 막지는 않는다 —
    막아봐야 시크릿 창으로 열면 그만이고, 친구끼리 하는 판에서
    기록의 근거는 어차피 서로에 대한 신뢰라서 */
-function recKey(){ return 'oneline-d' + E.dayNumber(); }
-function readRec(){
+/* 날짜는 판을 시작할 때 정한 것(S.day)을 끝까지 쓴다. 자정을 넘긴 판을
+   끝나는 순간의 날짜로 기록하거나 올리면 다음 날 시드로 재생되어 카드가 안 맞는다 */
+function recKey(day){ return 'oneline-d' + (day || E.dayNumber()); }
+function readRec(day){
   try {
-    var r = JSON.parse(localStorage.getItem(recKey()) || 'null');
+    var r = JSON.parse(localStorage.getItem(recKey(day)) || 'null');
     if (r) r.total = E.vUnpack(r.total);        // 예전 기록은 그냥 수로 들어 있다
     return r;
   } catch(e){ return null; }
 }
-function writeRec(r){
-  try { if (!readRec()) localStorage.setItem(recKey(), JSON.stringify(r)); } catch(e){}
+function writeRec(r, day){
+  try { if (!readRec(day)) localStorage.setItem(recKey(day), JSON.stringify(r)); } catch(e){}
 }
 
 function newGame(daily){
-  var seed = daily ? E.dailySeed() : (Math.random()*4294967295)>>>0;
+  var day = daily ? E.dayNumber() : null;
+  var seed = daily ? E.seedForDay(day) : (Math.random()*4294967295)>>>0;
   S = {
-    tut: null,
+    tut: null, day: day,
     daily: daily, seed: seed, floor: 1, total: E.V(0),
     /* 한 판 동안 둔 수. 순위 서버는 점수를 믿지 않고 이걸 엔진으로 다시 돌려
        직접 계산한다 — 그래서 여기 없는 수는 없던 일이 된다 */
@@ -338,7 +341,7 @@ function render(){
   document.getElementById('hGoal').innerHTML  =
     (goal == null || (S.tut && S.tut.def.always)) ? '—' : fmt(goal);
   document.getElementById('hMode').textContent  =
-    S.tut ? '튜토리얼' : (S.daily ? '데일리 #' + E.dayNumber() : '자유');
+    S.tut ? '튜토리얼' : (S.daily ? '데일리 #' + S.day : '자유');
   document.getElementById('hTotal').innerHTML = S.tut ? '—' : fmt(S.total);
   document.getElementById('hLoop').textContent  = S.tut ? (S.tut.def.loops || '—') : E.loopBudgetFor(S.floor);
 
@@ -603,7 +606,7 @@ function lineText(){
   return S.line.map(function(c){ return c ? E.CARDS[c.id].g : '·'; }).join(' ');
 }
 function shareText(){
-  return '한 줄 ' + (S.daily ? '#' + E.dayNumber() : '자유 ' + S.seed.toString(36)) + '\n' +
+  return '한 줄 ' + (S.daily ? '#' + S.day : '자유 ' + S.seed.toString(36)) + '\n' +
          (S.floor-1) + '층 통과 · 총점 ' + fmtT(S.total) + '\n' +
          lineText();
 }
@@ -612,8 +615,8 @@ function drawOver(p){
   /* 결과 화면이 다시 그려져도 "오늘 첫 판인가"가 바뀌면 안 된다.
      예전엔 두 번째로 그릴 때 방금 쓴 기록을 읽고 "이번 판은 연습"이라 했다 */
   if (S.daily && S.firstRec === undefined){
-    S.firstRec = readRec();
-    writeRec({ floor:reached, total:E.vPack(S.total), line:lineText() });
+    S.firstRec = readRec(S.day);
+    writeRec({ floor:reached, total:E.vPack(S.total), line:lineText() }, S.day);
   }
   var first = S.daily ? S.firstRec : null;
   /* 머리의 층 표시는 "지금 도전 중인 층"이라 못 넘은 층(예: 28)이 떠 있다.
@@ -912,7 +915,7 @@ function rankTable(b){
 function rankSection(first){
   var sec = el('div','ranksec');
   if (!S.daily) return null;
-  if (first || S.submitted){ loadBoard(sec, first ? '순위에는 오늘 첫 판만 올라갑니다.' : null); return sec; }
+  if (first || S.submitted){ loadBoard(sec, first ? '순위에는 오늘 첫 판만 올라갑니다.' : null, S.day); return sec; }
 
   var m = el('div','msg');
   m.innerHTML = '오늘 첫 판입니다. <em>순위에 올릴까요?</em>';
@@ -940,7 +943,7 @@ function submitRun(name, sec){
   sec.appendChild(el('div','hint','순위에 올리는 중…'));
   rankFetch('/api/submit', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rules: E.RULES, day: E.dayNumber(), pid: myPid(), name: name, moves: S.moves })
+    body: JSON.stringify({ rules: E.RULES, day: S.day, pid: myPid(), name: name, moves: S.moves })
   }).then(function(b){
     sec.innerHTML = '';
     var head = el('div','msg');
@@ -959,9 +962,9 @@ function submitRun(name, sec){
     r.appendChild(again); sec.appendChild(r);
   });
 }
-function loadBoard(box, note){
+function loadBoard(box, note, day){
   box.appendChild(el('div','hint','순위 불러오는 중…'));
-  rankFetch('/api/top?day=' + E.dayNumber() + '&me=' + myPid()).then(function(b){
+  rankFetch('/api/top?day=' + (day || E.dayNumber()) + '&me=' + myPid()).then(function(b){
     box.innerHTML = '';
     if (note) box.appendChild(el('div','msg', note));
     box.appendChild(rankTable(b));
